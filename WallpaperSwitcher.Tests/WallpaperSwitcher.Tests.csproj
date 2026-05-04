@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\WallpaperSwitcher\WallpaperSwitcher.csproj" />
+    <ProjectReference Include="..\WallpaperSwitcher.Core\WallpaperSwitcher.Core.csproj" />
   </ItemGroup>
 
 </Project>

@@ -35,7 +35,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         _settingsStore = settingsStore;
         _wallpaperService = wallpaperService;
-        _scheduler = new WallpaperScheduler(() => ApplyWallpaperAndReschedule(forceApply: true));
+        _scheduler = new WallpaperScheduler(
+            () => ApplyWallpaperAndReschedule(forceApply: true),
+            () => ApplyWallpaperAndReschedule(forceApply: false));
 
         _selectedShuffleOption = _shuffleOptions.First(option => option.Value == ShuffleCadence.Daily);
         _startAtLogin = LaunchAtLoginService.IsEnabled();

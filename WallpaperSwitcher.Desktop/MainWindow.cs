@@ -44,7 +44,7 @@ public sealed class MainWindow : Window
 
         Closing += (_, args) =>
         {
-            if (_isQuitting)
+            if (_isQuitting || args.CloseReason != WindowCloseReason.WindowClosing)
             {
                 return;
             }

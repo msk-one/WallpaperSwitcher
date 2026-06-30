@@ -7,6 +7,7 @@ APP_NAME="WallpaperSwitcher"
 ICON_SOURCE="$ROOT_DIR/WallpaperSwitcher.Desktop/Assets/AppIcon.png"
 RUNTIME="${1:-osx-arm64}"
 CONFIGURATION="${CONFIGURATION:-Release}"
+ICON_BUNDLE_FILE="AppIcon"
 
 if [[ "$RUNTIME" != osx-* ]]; then
   echo "Runtime must be a macOS runtime such as osx-arm64 or osx-x64." >&2
@@ -60,7 +61,15 @@ if [[ -f "$ICON_SOURCE" ]]; then
   sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
   sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null
   cp "$ICON_SOURCE" "$ICONSET_DIR/icon_512x512@2x.png"
-  iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"
+  xattr -cr "$ICONSET_DIR" 2>/dev/null || true
+  if iconutil -c icns "$ICONSET_DIR" -o "$RESOURCES_DIR/AppIcon.icns"; then
+    ICON_BUNDLE_FILE="AppIcon"
+  else
+    echo "warning: iconutil could not create AppIcon.icns; falling back to AppIcon.png for local testing." >&2
+    cp "$ICON_SOURCE" "$RESOURCES_DIR/AppIcon.png"
+    xattr -cr "$RESOURCES_DIR/AppIcon.png" 2>/dev/null || true
+    ICON_BUNDLE_FILE="AppIcon.png"
+  fi
 fi
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
@@ -77,7 +86,7 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key>
   <string>com.wallpaperswitcher.app</string>
   <key>CFBundleIconFile</key>
-  <string>AppIcon</string>
+  <string>$ICON_BUNDLE_FILE</string>
   <key>CFBundleIconName</key>
   <string>AppIcon</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -108,6 +117,10 @@ fi
 
 cp -R "$APP_DIR" "$APP_ARTIFACT_ROOT/"
 cp -R "$APP_DIR" "$STAGING_DIR/"
+xattr -cr "$APP_ARTIFACT_ROOT/$APP_NAME.app" 2>/dev/null || true
+xattr -cr "$STAGING_DIR/$APP_NAME.app" 2>/dev/null || true
+xattr -d com.apple.FinderInfo "$APP_ARTIFACT_ROOT/$APP_NAME.app" 2>/dev/null || true
+xattr -d com.apple.FinderInfo "$STAGING_DIR/$APP_NAME.app" 2>/dev/null || true
 ln -s /Applications "$STAGING_DIR/Applications"
 
 hdiutil create \

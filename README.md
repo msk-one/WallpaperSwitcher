@@ -41,7 +41,7 @@ dotnet test WallpaperSwitcher.Tests/WallpaperSwitcher.Tests.csproj -c Release
 Publish a single target:
 
 ```bash
-dotnet publish WallpaperSwitcher.Desktop/WallpaperSwitcher.Desktop.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
+dotnet publish WallpaperSwitcher.Desktop/WallpaperSwitcher.Desktop.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
 Package a macOS DMG:

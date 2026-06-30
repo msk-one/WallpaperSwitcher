@@ -20,8 +20,11 @@ if ! command -v hdiutil >/dev/null 2>&1; then
 fi
 
 export AVALONIA_TELEMETRY_OPTOUT="${AVALONIA_TELEMETRY_OPTOUT:-1}"
+export DOTNET_CLI_HOME="${DOTNET_CLI_HOME:-${TMPDIR:-/tmp}/dotnet-home}"
+mkdir -p "$DOTNET_CLI_HOME"
 
 PUBLISH_DIR="$ROOT_DIR/artifacts/publish/$RUNTIME"
+RUNTIME_BUILD_DIR="$ROOT_DIR/WallpaperSwitcher.Desktop/bin/$CONFIGURATION/net9.0/$RUNTIME"
 APP_ARTIFACT_ROOT="$ROOT_DIR/artifacts/macos/$RUNTIME"
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wallpaper-switcher-dmg.XXXXXX")"
 APP_DIR="$BUILD_ROOT/$APP_NAME.app"
@@ -38,8 +41,18 @@ dotnet publish "$PROJECT" \
   -r "$RUNTIME" \
   --self-contained true \
   -p:PublishSingleFile=true \
+  -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:PublishReadyToRun=false \
   -o "$PUBLISH_DIR"
+
+for native_library in libSkiaSharp.dylib libHarfBuzzSharp.dylib libAvaloniaNative.dylib; do
+  if [[ ! -f "$RUNTIME_BUILD_DIR/$native_library" ]]; then
+    echo "Missing required native library: $RUNTIME_BUILD_DIR/$native_library" >&2
+    exit 1
+  fi
+
+  cp "$RUNTIME_BUILD_DIR/$native_library" "$PUBLISH_DIR/"
+done
 
 rm -rf "$APP_ARTIFACT_ROOT" "$DMG_PATH"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$STAGING_DIR" "$DMG_DIR" "$APP_ARTIFACT_ROOT"

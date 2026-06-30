@@ -45,6 +45,11 @@ public sealed class TrayMenuController : IDisposable
         };
         _trayIcon.Clicked += (_, _) => RunOnUiThread(ShowWindow);
 
+        if (OperatingSystem.IsMacOS())
+        {
+            MacOSProperties.SetIsTemplateIcon(_trayIcon, true);
+        }
+
         if (Application.Current is not null)
         {
             TrayIcon.SetIcons(Application.Current, new TrayIcons { _trayIcon });

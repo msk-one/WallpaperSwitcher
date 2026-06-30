@@ -374,7 +374,7 @@ public sealed class MainWindow : Window
             return;
         }
 
-        _trayMenuController = new TrayMenuController(this, ViewModel, LoadAppIcon(), QuitApplication);
+        _trayMenuController = new TrayMenuController(this, ViewModel, LoadTrayIcon(), QuitApplication);
     }
 
     private void QuitApplication()
@@ -802,6 +802,11 @@ public sealed class MainWindow : Window
     private static WindowIcon LoadAppIcon()
     {
         return new WindowIcon(AssetLoader.Open(new Uri("avares://WallpaperSwitcher/Assets/AppIcon.png")));
+    }
+
+    private static WindowIcon LoadTrayIcon()
+    {
+        return new WindowIcon(AssetLoader.Open(new Uri("avares://WallpaperSwitcher/Assets/TrayIcon.png")));
     }
 
 }

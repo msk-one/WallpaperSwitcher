@@ -10,8 +10,6 @@ The app switches the desktop wallpaper between `Day` and `Night` image sets base
   Portable scheduling, settings, and wallpaper selection code
 - `WallpaperSwitcher.Desktop/`
   Avalonia desktop application for Windows, macOS, and Linux
-- `WallpaperSwitcher/`
-  Legacy WPF Windows implementation kept for reference during the port
 - `WallpaperSwitcher.Tests/`
   Portable unit tests for schedule calculation and boundary behavior
 - `WallpaperSwitcher.sln`

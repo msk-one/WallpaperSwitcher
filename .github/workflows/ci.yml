@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  AVALONIA_TELEMETRY_OPTOUT: 1
+
+jobs:
+  build-test:
+    name: Build & test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-14]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore WallpaperSwitcher.sln
+
+      - name: Build
+        run: dotnet build WallpaperSwitcher.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test WallpaperSwitcher.Tests/WallpaperSwitcher.Tests.csproj -c Release --no-build --logger "console;verbosity=normal"
+
+  publish-smoke:
+    name: Publish smoke (win-x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      # Proves the self-contained single-file publish still produces a runnable
+      # executable with the Skia/HarfBuzz native libraries embedded.
+      - name: Publish
+        run: >
+          dotnet publish WallpaperSwitcher.Desktop/WallpaperSwitcher.Desktop.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:PublishReadyToRun=false
+          -p:DebugType=none
+          -o artifacts/publish/win-x64
+
+      - name: Verify executable exists
+        shell: pwsh
+        run: |
+          $exe = "artifacts/publish/win-x64/WallpaperSwitcher.exe"
+          if (-not (Test-Path $exe)) { throw "Publish did not produce $exe" }
+          $mb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "WallpaperSwitcher.exe = $mb MB"
+          if ($mb -lt 40) { throw "Executable is $mb MB - native libraries are probably not embedded" }

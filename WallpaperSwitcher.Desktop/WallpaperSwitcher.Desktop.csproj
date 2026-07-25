@@ -22,4 +22,16 @@
     <ProjectReference Include="..\WallpaperSwitcher.Core\WallpaperSwitcher.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    The SkiaSharp and HarfBuzzSharp packages ship native .pdb files (~100 MB
+    combined) as runtime assets. DebugType only controls our own symbols, so
+    these have to be dropped from the publish list explicitly or every release
+    artifact carries them.
+  -->
+  <Target Name="RemoveNativeSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+
 </Project>

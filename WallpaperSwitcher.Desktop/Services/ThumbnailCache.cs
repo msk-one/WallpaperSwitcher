@@ -49,11 +49,14 @@ public sealed class ThumbnailCache : IValueConverter, IDisposable
             using var stream = File.OpenRead(path);
             return Bitmap.DecodeToWidth(stream, DecodeWidth, BitmapInterpolationMode.LowQuality);
         }
-        catch (Exception ex) when (ex is IOException
-            or UnauthorizedAccessException
-            or NotSupportedException
-            or ArgumentException)
+        catch (Exception ex)
         {
+            // Deliberately broad. This runs inside an IValueConverter on the UI
+            // thread, so anything that escapes takes the whole app down, and Skia
+            // does not document which exception types it raises for a format it
+            // cannot decode (HEIC/HEIF and TIFF are unsupported) or for a
+            // truncated file. A missing preview is not worth a crash.
+            AppLog.Warn($"No preview for '{path}': {ex.GetType().Name}: {ex.Message}");
             return null;
         }
     }

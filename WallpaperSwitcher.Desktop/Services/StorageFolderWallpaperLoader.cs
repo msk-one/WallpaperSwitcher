@@ -29,7 +29,7 @@ public static class StorageFolderWallpaperLoader
 
         var warning = skippedFolders == 0
             ? null
-            : $"Skipped {skippedFolders} folder(s) that macOS would not allow this app to read.";
+            : $"Skipped {skippedFolders} folder(s) that could not be read.";
 
         return new WallpaperLoadResult(wallpapers, skippedFolders, warning);
     }

@@ -19,17 +19,35 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         new(ShuffleCadence.Weekly, "Each week")
     ];
 
+    private readonly IReadOnlyList<WallpaperFitOption> _fitOptions =
+    [
+        new(WallpaperFit.Fill, "Fill"),
+        new(WallpaperFit.Fit, "Fit"),
+        new(WallpaperFit.Stretch, "Stretch"),
+        new(WallpaperFit.Center, "Center"),
+        new(WallpaperFit.Tile, "Tile"),
+        new(WallpaperFit.Span, "Span")
+    ];
+
+    /// <summary>
+    /// Files that failed to apply during this run. The cycle key is deterministic,
+    /// so without this the watchdog would recompute the same unusable image every
+    /// minute and never change the wallpaper for the rest of the cycle.
+    /// </summary>
+    private readonly HashSet<string> _failedWallpapers = new(StringComparer.OrdinalIgnoreCase);
+
     private string _wallpaperDirectory = string.Empty;
     private string _dayStartText = "06:00";
     private string _nightStartText = "18:00";
     private ShuffleOption _selectedShuffleOption;
-    private WallpaperItem? _selectedWallpaper;
+    private WallpaperFitOption _selectedFitOption;
     private string _statusMessage = "Choose a folder with wallpapers to get started.";
     private string? _lastAppliedPath;
     private string? _lastAppliedCycleKey;
     private string _loadedWallpaperDirectory = string.Empty;
     private string? _wallpaperFolderBookmark;
     private bool _startAtLogin;
+    private bool _startMinimized;
 
     public MainWindowViewModel(SettingsStore settingsStore, IWallpaperService wallpaperService)
     {
@@ -40,6 +58,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             () => ApplyWallpaperAndReschedule(forceApply: false));
 
         _selectedShuffleOption = _shuffleOptions.First(option => option.Value == ShuffleCadence.Daily);
+        _selectedFitOption = _fitOptions.First(option => option.Value == WallpaperFit.Fill);
         _startAtLogin = LaunchAtLoginService.IsEnabled();
         LoadSettings();
     }
@@ -76,10 +95,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         set => SetField(ref _selectedShuffleOption, value);
     }
 
-    public WallpaperItem? SelectedWallpaper
+    public IReadOnlyList<WallpaperFitOption> FitOptions => _fitOptions;
+
+    public WallpaperFitOption SelectedFitOption
     {
-        get => _selectedWallpaper;
-        set => SetField(ref _selectedWallpaper, value);
+        get => _selectedFitOption;
+        set => SetField(ref _selectedFitOption, value);
     }
 
     public string StatusMessage
@@ -98,6 +119,21 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _startAtLogin;
         private set => SetField(ref _startAtLogin, value);
+    }
+
+    public bool StartMinimized
+    {
+        get => _startMinimized;
+        private set => SetField(ref _startMinimized, value);
+    }
+
+    public void SetStartMinimized(bool enabled)
+    {
+        StartMinimized = enabled;
+        StatusMessage = enabled
+            ? "Wallpaper Switcher will start in the tray without opening a window."
+            : "Wallpaper Switcher will open its window on start.";
+        Save();
     }
 
     public void Start()
@@ -145,7 +181,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        _settingsStore.Save(settings);
+        if (!_settingsStore.TrySave(settings, out var saveError))
+        {
+            StatusMessage = saveError ?? "Could not save settings.";
+            AppLog.Error($"Saving settings failed: {saveError}");
+            return;
+        }
+
         StatusMessage = "Settings saved. Wallpaper schedule is active.";
         ApplyWallpaperAndReschedule(forceApply: true);
     }
@@ -200,18 +242,11 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             : "Wallpaper Switcher will no longer start when you sign in.";
     }
 
-    public void SetSelectedCategory(WallpaperCategory category)
+    public void SetWallpaperFit(WallpaperFit fit)
     {
-        if (SelectedWallpaper is null)
-        {
-            StatusMessage = "Select an image first.";
-            return;
-        }
-
-        SelectedWallpaper.Category = category;
-        var dayCount = WallpaperItems.Count(item => item.Category == WallpaperCategory.Day);
-        var nightCount = WallpaperItems.Count(item => item.Category == WallpaperCategory.Night);
-        StatusMessage = $"{SelectedWallpaper.FileName} marked as {category}. Day: {dayCount}, Night: {nightCount}.";
+        SelectedFitOption = _fitOptions.FirstOrDefault(option => option.Value == fit) ?? _selectedFitOption;
+        StatusMessage = $"Wallpaper fit set to {SelectedFitOption.Label.ToLowerInvariant()}.";
+        ApplyWallpaperAndReschedule(forceApply: true);
     }
 
     public void Dispose()
@@ -221,14 +256,17 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void LoadSettings()
     {
-        var settings = _settingsStore.Load();
+        var settings = _settingsStore.Load(out var loadStatus);
 
         WallpaperDirectory = settings.WallpaperDirectory;
         _wallpaperFolderBookmark = settings.WallpaperFolderBookmark;
         DayStartText = FormatTime(settings.DayStartsAt);
         NightStartText = FormatTime(settings.NightStartsAt);
+        StartMinimized = settings.StartMinimized;
         SelectedShuffleOption = _shuffleOptions.FirstOrDefault(option => option.Value == settings.ShuffleCadence)
             ?? _shuffleOptions.First(option => option.Value == ShuffleCadence.Daily);
+        SelectedFitOption = _fitOptions.FirstOrDefault(option => option.Value == settings.WallpaperFit)
+            ?? _fitOptions.First(option => option.Value == WallpaperFit.Fill);
 
         var savedAssignments = settings.Assignments.ToDictionary(
             assignment => assignment.Path,
@@ -237,9 +275,19 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         RefreshWallpapers(savedAssignments);
 
-        if (File.Exists(SettingsPath))
+        switch (loadStatus)
         {
-            StatusMessage = "Settings loaded. The app will keep watching your schedule.";
+            case SettingsLoadStatus.Loaded:
+                StatusMessage = "Settings loaded. The app will keep watching your schedule.";
+                break;
+            case SettingsLoadStatus.Corrupt:
+                StatusMessage = "Your settings file was unreadable and has been set aside. Choose your folder again to start over.";
+                AppLog.Warn("Settings file was corrupt and has been quarantined.");
+                break;
+            case SettingsLoadStatus.Unreadable:
+                StatusMessage = "The settings file could not be opened. Starting with defaults; your saved settings were left untouched.";
+                AppLog.Warn("Settings file exists but could not be read.");
+                break;
         }
     }
 
@@ -262,7 +310,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private void RefreshWallpapers(IReadOnlyDictionary<string, WallpaperCategory>? preferredAssignments)
     {
         WallpaperItems.Clear();
-        SelectedWallpaper = null;
+        _failedWallpapers.Clear();
 
         if (string.IsNullOrWhiteSpace(WallpaperDirectory))
         {
@@ -287,7 +335,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private void ApplyLoadResult(WallpaperLoadResult loadResult, string? statusPrefix = null)
     {
         WallpaperItems.Clear();
-        SelectedWallpaper = null;
+        _failedWallpapers.Clear();
 
         foreach (var wallpaper in loadResult.Wallpapers)
         {
@@ -329,14 +377,18 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         var targetCategory = WallpaperScheduleCalculator.GetCurrentCategory(now, dayStart, nightStart);
 
         var candidates = WallpaperItems
-            .Where(item => item.Category == targetCategory && File.Exists(item.FullPath))
+            .Where(item => item.Category == targetCategory
+                && File.Exists(item.FullPath)
+                && !_failedWallpapers.Contains(item.FullPath))
             .Select(item => item.FullPath)
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (candidates.Count == 0)
         {
-            StatusMessage = $"No {targetCategory} wallpapers are assigned.";
+            StatusMessage = _failedWallpapers.Count == 0
+                ? $"No {targetCategory} wallpapers are assigned."
+                : $"None of the assigned {targetCategory} wallpapers could be applied. Check the log for details.";
             return;
         }
 
@@ -356,15 +408,31 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        if (!_wallpaperService.TryApply(targetWallpaper, out var errorMessage))
+        // Walk forward through the candidates if the chosen one will not apply.
+        // An image the OS cannot decode must not stall the whole cycle: with a
+        // deterministic cycle key, returning here would make the watchdog retry
+        // the same file every minute until the next boundary.
+        var startIndex = Math.Max(0, candidates.IndexOf(targetWallpaper));
+        string? lastError = null;
+
+        for (var attempt = 0; attempt < candidates.Count; attempt++)
         {
-            StatusMessage = errorMessage ?? "Unable to change the wallpaper.";
-            return;
+            var candidate = candidates[(startIndex + attempt) % candidates.Count];
+
+            if (_wallpaperService.TryApply(candidate, SelectedFitOption.Value, out var errorMessage))
+            {
+                _lastAppliedPath = candidate;
+                _lastAppliedCycleKey = cycleKey;
+                StatusMessage = $"{targetCategory} wallpaper active: {Path.GetFileName(candidate)}";
+                return;
+            }
+
+            lastError = errorMessage;
+            _failedWallpapers.Add(candidate);
+            AppLog.Warn($"Could not apply '{candidate}': {errorMessage}");
         }
 
-        _lastAppliedPath = targetWallpaper;
-        _lastAppliedCycleKey = cycleKey;
-        StatusMessage = $"{targetCategory} wallpaper active: {Path.GetFileName(targetWallpaper)}";
+        StatusMessage = lastError ?? "Unable to change the wallpaper.";
     }
 
     private string PickNextWallpaper(IReadOnlyList<string> candidates)
@@ -439,6 +507,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         settings.DayStartsAt = dayStart;
         settings.NightStartsAt = nightStart;
         settings.ShuffleCadence = SelectedShuffleOption.Value;
+        settings.WallpaperFit = SelectedFitOption.Value;
+        settings.StartMinimized = StartMinimized;
         settings.Assignments = WallpaperItems
             .Select(item => new WallpaperAssignment
             {

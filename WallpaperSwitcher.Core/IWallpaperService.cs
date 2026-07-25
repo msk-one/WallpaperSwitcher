@@ -2,5 +2,5 @@ namespace WallpaperSwitcher;
 
 public interface IWallpaperService
 {
-    bool TryApply(string wallpaperPath, out string? errorMessage);
+    bool TryApply(string wallpaperPath, WallpaperFit fit, out string? errorMessage);
 }

@@ -3,6 +3,21 @@ using System.Text.Json;
 
 namespace WallpaperSwitcher;
 
+public enum SettingsLoadStatus
+{
+    /// <summary>No settings file exists yet; defaults are in use.</summary>
+    NotFound,
+
+    /// <summary>The settings file was read successfully.</summary>
+    Loaded,
+
+    /// <summary>The settings file was unreadable and has been moved aside.</summary>
+    Corrupt,
+
+    /// <summary>The settings file exists but could not be opened.</summary>
+    Unreadable
+}
+
 public sealed class SettingsStore
 {
     private readonly JsonSerializerOptions _jsonOptions = new()
@@ -11,43 +26,135 @@ public sealed class SettingsStore
     };
 
     public SettingsStore()
+        : this(AppDataDirectory)
     {
-        var appDataDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "WallpaperSwitcher");
+    }
 
+    /// <param name="appDataDirectory">
+    /// Overrides the per-user location. Exists so tests can work against a scratch
+    /// directory: <see cref="Environment.SpecialFolder"/> resolves through the
+    /// Win32 known-folder API on Windows and cannot be redirected with an
+    /// environment variable.
+    /// </param>
+    public SettingsStore(string appDataDirectory)
+    {
         SettingsPath = Path.Combine(appDataDirectory, "settings.json");
     }
+
+    /// <summary>
+    /// Per-user data directory shared by the settings file and the log folder.
+    /// </summary>
+    public static string AppDataDirectory { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "WallpaperSwitcher");
 
     public string SettingsPath { get; }
 
     public AppSettings Load()
     {
+        return Load(out _);
+    }
+
+    public AppSettings Load(out SettingsLoadStatus status)
+    {
+        if (!File.Exists(SettingsPath))
+        {
+            status = SettingsLoadStatus.NotFound;
+            return new AppSettings();
+        }
+
+        string json;
         try
         {
-            if (!File.Exists(SettingsPath))
+            json = File.ReadAllText(SettingsPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            status = SettingsLoadStatus.Unreadable;
+            return new AppSettings();
+        }
+
+        try
+        {
+            var settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions);
+            if (settings is not null)
             {
-                return new AppSettings();
+                status = SettingsLoadStatus.Loaded;
+                return settings;
+            }
+        }
+        catch (JsonException)
+        {
+            // Fall through to the quarantine path below.
+        }
+
+        // Never silently discard a file we could not parse. Overwriting it on the
+        // next save would destroy the user's folder and every Day/Night assignment
+        // with no way to recover them.
+        QuarantineCorruptFile();
+        status = SettingsLoadStatus.Corrupt;
+        return new AppSettings();
+    }
+
+    public bool TrySave(AppSettings settings, out string? errorMessage)
+    {
+        errorMessage = null;
+
+        var directory = Path.GetDirectoryName(SettingsPath);
+        var temporaryPath = SettingsPath + ".tmp";
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
             }
 
-            var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+            // Write-then-rename. A direct write truncates first, so an interrupted
+            // save (crash, full disk, antivirus holding the handle) would leave a
+            // half-written file that the next load has to quarantine.
+            var json = JsonSerializer.Serialize(settings, _jsonOptions);
+            File.WriteAllText(temporaryPath, json);
+            File.Move(temporaryPath, SettingsPath, overwrite: true);
+            return true;
         }
-        catch
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
         {
-            return new AppSettings();
+            errorMessage = $"Could not save settings: {ex.Message}";
+            TryDelete(temporaryPath);
+            return false;
         }
     }
 
-    public void Save(AppSettings settings)
+    private void QuarantineCorruptFile()
     {
-        var directory = Path.GetDirectoryName(SettingsPath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
+        var stamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+        var quarantinePath = Path.Combine(
+            Path.GetDirectoryName(SettingsPath) ?? AppDataDirectory,
+            $"settings.corrupt-{stamp}.json");
 
-        var json = JsonSerializer.Serialize(settings, _jsonOptions);
-        File.WriteAllText(SettingsPath, json);
+        try
+        {
+            File.Move(SettingsPath, quarantinePath, overwrite: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Best effort. A failure here only means the bad file stays put.
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Nothing useful to do about a leftover temp file.
+        }
     }
 }

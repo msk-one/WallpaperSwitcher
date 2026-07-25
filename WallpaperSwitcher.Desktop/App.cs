@@ -10,6 +10,16 @@ namespace WallpaperSwitcher.Desktop;
 
 public sealed class App : Application
 {
+    private MainWindowViewModel? _viewModel;
+    private TrayMenuController? _trayMenuController;
+    private MainWindow? _mainWindow;
+
+    /// <summary>
+    /// Set from the command line before the app starts. Suppresses the initial
+    /// window so signing in lands straight in the tray.
+    /// </summary>
+    public static bool StartMinimizedRequested { get; set; }
+
     public override void Initialize()
     {
         Name = "Wallpaper Switcher";
@@ -28,16 +38,94 @@ public sealed class App : Application
 
             var settingsStore = new SettingsStore();
             var wallpaperService = new PlatformWallpaperService();
-            var viewModel = new MainWindowViewModel(settingsStore, wallpaperService);
+            _viewModel = new MainWindowViewModel(settingsStore, wallpaperService);
 
-            desktop.MainWindow = new MainWindow
+            // The tray and the scheduler are owned by the application, not by the
+            // window. They used to be created in MainWindow.Opened, which meant
+            // the wallpaper schedule never armed unless a window was shown.
+            _trayMenuController = new TrayMenuController(
+                _viewModel,
+                AppIcons.LoadTrayIcon(),
+                ShowMainWindow,
+                QuitApplication);
+
+            _viewModel.Start();
+
+            if (!ShouldStartMinimized(_viewModel))
             {
-                DataContext = viewModel
-            };
+                // Assigning MainWindow is what makes the classic lifetime show it,
+                // so a minimized start simply never assigns one.
+                ShowMainWindow();
+            }
+            else
+            {
+                AppLog.Info("Started minimized to the tray.");
+            }
 
-            desktop.Exit += (_, _) => viewModel.Dispose();
+            desktop.Exit += (_, _) =>
+            {
+                _trayMenuController?.Dispose();
+                _viewModel?.Dispose();
+                ThumbnailCache.Instance.Dispose();
+                AppLog.Info("Wallpaper Switcher exiting.");
+            };
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Called when a second launch asks this instance to surface itself.
+    /// </summary>
+    public void ActivateFromAnotherInstance()
+    {
+        ShowMainWindow();
+    }
+
+    private static bool ShouldStartMinimized(MainWindowViewModel viewModel)
+    {
+        if (!StartMinimizedRequested && !viewModel.StartMinimized)
+        {
+            return false;
+        }
+
+        // macOS reopens the wallpaper folder through a security-scoped bookmark,
+        // and that needs a TopLevel to resolve. Until the macOS startup path has
+        // been re-verified, a saved bookmark forces the window to be created.
+        if (OperatingSystem.IsMacOS() && !string.IsNullOrWhiteSpace(viewModel.WallpaperFolderBookmark))
+        {
+            AppLog.Info("Ignoring minimized start: a macOS folder bookmark needs a window to restore.");
+            return false;
+        }
+
+        return true;
+    }
+
+    private void ShowMainWindow()
+    {
+        if (_viewModel is null || ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            return;
+        }
+
+        if (_mainWindow is null)
+        {
+            _mainWindow = new MainWindow { DataContext = _viewModel };
+            desktop.MainWindow = _mainWindow;
+        }
+
+        _mainWindow.Show();
+        _mainWindow.Activate();
+    }
+
+    private void QuitApplication()
+    {
+        _trayMenuController?.Dispose();
+        _trayMenuController = null;
+
+        if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            desktop.Shutdown();
+        }
     }
 }

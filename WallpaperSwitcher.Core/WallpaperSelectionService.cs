@@ -12,6 +12,7 @@ public static class WallpaperSelectionService
         ".jpeg",
         ".png",
         ".bmp",
+        ".gif",
         ".heic",
         ".heif",
         ".webp",
@@ -52,7 +53,7 @@ public static class WallpaperSelectionService
 
         var message = skippedDirectories == 0
             ? null
-            : $"Skipped {skippedDirectories} folder(s) that macOS would not allow this app to read.";
+            : $"Skipped {skippedDirectories} folder(s) that could not be read.";
 
         return new WallpaperLoadResult(files, skippedDirectories, message);
     }

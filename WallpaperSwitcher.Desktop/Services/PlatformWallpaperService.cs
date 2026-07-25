@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+using Microsoft.Win32;
 
 namespace WallpaperSwitcher.Desktop.Services;
 
@@ -10,7 +12,7 @@ public sealed class PlatformWallpaperService : IWallpaperService
     private const uint UpdateIniFile = 0x0001;
     private const uint SendWinIniChange = 0x0002;
 
-    public bool TryApply(string wallpaperPath, out string? errorMessage)
+    public bool TryApply(string wallpaperPath, WallpaperFit fit, out string? errorMessage)
     {
         errorMessage = null;
 
@@ -20,9 +22,18 @@ public sealed class PlatformWallpaperService : IWallpaperService
             return false;
         }
 
+        // Windows accepts a corrupt or empty file and paints the desktop black
+        // rather than reporting an error, so the file has to be vetted here or a
+        // bad image silently blanks the desktop for the rest of the cycle.
+        if (!ImageFileProbe.LooksLikeImage(wallpaperPath, out var probeReason))
+        {
+            errorMessage = $"'{Path.GetFileName(wallpaperPath)}' is not a usable image: {probeReason}.";
+            return false;
+        }
+
         if (OperatingSystem.IsWindows())
         {
-            return TryApplyWindows(wallpaperPath, out errorMessage);
+            return TryApplyWindows(wallpaperPath, fit, out errorMessage);
         }
 
         if (OperatingSystem.IsMacOS())
@@ -39,9 +50,16 @@ public sealed class PlatformWallpaperService : IWallpaperService
         return false;
     }
 
-    private static bool TryApplyWindows(string wallpaperPath, out string? errorMessage)
+    [SupportedOSPlatform("windows")]
+    private static bool TryApplyWindows(string wallpaperPath, WallpaperFit fit, out string? errorMessage)
     {
         errorMessage = null;
+
+        // SystemParametersInfo does not carry the fit mode; it reads whatever is
+        // already in HKCU\Control Panel\Desktop. Writing it first is what makes
+        // the app's own setting authoritative instead of inheriting whatever the
+        // machine happened to be left on.
+        ApplyWindowsFit(fit);
 
         if (!NativeMethods.SystemParametersInfo(
                 SetDesktopWallpaper,
@@ -54,6 +72,39 @@ public sealed class PlatformWallpaperService : IWallpaperService
         }
 
         return true;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void ApplyWindowsFit(WallpaperFit fit)
+    {
+        // WallpaperStyle / TileWallpaper pairs, per the documented shell values.
+        var (style, tile) = fit switch
+        {
+            WallpaperFit.Fill => ("10", "0"),
+            WallpaperFit.Fit => ("6", "0"),
+            WallpaperFit.Stretch => ("2", "0"),
+            WallpaperFit.Center => ("0", "0"),
+            WallpaperFit.Tile => ("0", "1"),
+            WallpaperFit.Span => ("22", "0"),
+            _ => ("10", "0")
+        };
+
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Desktop", writable: true);
+            if (key is null)
+            {
+                return;
+            }
+
+            key.SetValue("WallpaperStyle", style, RegistryValueKind.String);
+            key.SetValue("TileWallpaper", tile, RegistryValueKind.String);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            // The wallpaper itself still applies; it just keeps the previous fit.
+            AppLog.Warn($"Could not set wallpaper fit to {fit}: {ex.Message}");
+        }
     }
 
     private static bool TryApplyMacOS(string wallpaperPath, out string? errorMessage)

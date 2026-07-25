@@ -17,8 +17,7 @@ namespace WallpaperSwitcher.Desktop;
 
 public sealed class MainWindow : Window
 {
-    private TrayMenuController? _trayMenuController;
-    private bool _isQuitting;
+    private bool _hasRestoredBookmark;
     private ThemePalette _palette;
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
@@ -30,21 +29,31 @@ public sealed class MainWindow : Window
         Height = 720;
         MinWidth = 940;
         MinHeight = 560;
-        Icon = LoadAppIcon();
+        Icon = AppIcons.LoadAppIcon();
         _palette = ThemePalette.FromTheme(ActualThemeVariant);
         Background = _palette.Brush(_palette.WindowBackground);
         Content = BuildLayout();
 
         Opened += async (_, _) =>
         {
-            EnsureTrayMenu();
+            // Restoring a macOS security-scoped bookmark needs a TopLevel, which
+            // is why it lives here and not with the rest of startup in App. The
+            // window can be reopened from the tray, so only do it once.
+            if (_hasRestoredBookmark)
+            {
+                return;
+            }
+
+            _hasRestoredBookmark = true;
             await RestoreBookmarkedFolderAsync();
-            ViewModel.Start();
         };
 
         Closing += (_, args) =>
         {
-            if (_isQuitting || args.CloseReason != WindowCloseReason.WindowClosing)
+            // Only intercept the user clicking the close button. An application
+            // or OS shutdown must be allowed through, or the machine cannot log
+            // off while the app sits in the tray.
+            if (args.CloseReason != WindowCloseReason.WindowClosing)
             {
                 return;
             }
@@ -52,8 +61,6 @@ public sealed class MainWindow : Window
             args.Cancel = true;
             Hide();
         };
-
-        Closed += (_, _) => _trayMenuController?.Dispose();
 
         ActualThemeVariantChanged += (_, _) =>
         {
@@ -213,6 +220,31 @@ public sealed class MainWindow : Window
         schedulePanel.Children.Add(FieldGroup("Night starts", TimeTextBox(nameof(MainWindowViewModel.NightStartText))));
         schedulePanel.Children.Add(FieldGroup("Shuffle", shuffle));
 
+        if (OperatingSystem.IsWindows())
+        {
+            // Only Windows honours the fit setting; macOS and Linux desktops
+            // decide how to scale the wallpaper themselves.
+            var fit = new ComboBox
+            {
+                Width = 130,
+                MinHeight = 34,
+                Margin = new Thickness(10, 0, 0, 0),
+                Background = _palette.Brush(_palette.InputBackground),
+                Foreground = _palette.Brush(_palette.Text),
+                BorderBrush = _palette.Brush(_palette.InputBorder)
+            };
+            fit.Bind(ItemsControl.ItemsSourceProperty, OneWay(nameof(MainWindowViewModel.FitOptions)));
+            fit.Bind(ComboBox.SelectedItemProperty, TwoWay(nameof(MainWindowViewModel.SelectedFitOption)));
+            fit.SelectionChanged += (_, _) =>
+            {
+                if (fit.SelectedItem is WallpaperFitOption option)
+                {
+                    ViewModel.SetWallpaperFit(option.Value);
+                }
+            };
+            schedulePanel.Children.Add(FieldGroup("Fit", fit));
+        }
+
         var startAtLogin = new CheckBox
         {
             Content = "Start at login",
@@ -223,6 +255,17 @@ public sealed class MainWindow : Window
         startAtLogin.Bind(ToggleButton.IsCheckedProperty, OneWay(nameof(MainWindowViewModel.StartAtLogin)));
         startAtLogin.Click += (_, _) => ViewModel.SetStartAtLogin(startAtLogin.IsChecked == true);
         schedulePanel.Children.Add(startAtLogin);
+
+        var startMinimized = new CheckBox
+        {
+            Content = "Start minimized",
+            Margin = new Thickness(18, 4, 0, 4),
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = _palette.Brush(_palette.Text)
+        };
+        startMinimized.Bind(ToggleButton.IsCheckedProperty, OneWay(nameof(MainWindowViewModel.StartMinimized)));
+        startMinimized.Click += (_, _) => ViewModel.SetStartMinimized(startMinimized.IsChecked == true);
+        schedulePanel.Children.Add(startMinimized);
 
         scheduleCard.Child = schedulePanel;
         Grid.SetRow(scheduleCard, 1);
@@ -367,30 +410,6 @@ public sealed class MainWindow : Window
         };
     }
 
-    private void EnsureTrayMenu()
-    {
-        if (_trayMenuController is not null || Icon is null)
-        {
-            return;
-        }
-
-        _trayMenuController = new TrayMenuController(this, ViewModel, LoadTrayIcon(), QuitApplication);
-    }
-
-    private void QuitApplication()
-    {
-        _isQuitting = true;
-        _trayMenuController?.Dispose();
-        _trayMenuController = null;
-
-        if (Application.Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            desktop.Shutdown();
-            return;
-        }
-
-        Close();
-    }
 
     private TextBlock HeaderCell(string text, int column)
     {
@@ -465,7 +484,7 @@ public sealed class MainWindow : Window
         var folderPath = selectedFolder.TryGetLocalPath() ?? selectedFolder.Path.LocalPath;
         if (string.IsNullOrWhiteSpace(folderPath))
         {
-            ViewModel.StatusMessage = "macOS did not provide a usable local path for that folder.";
+            ViewModel.StatusMessage = "The system did not provide a usable local path for that folder.";
             return;
         }
 
@@ -508,14 +527,14 @@ public sealed class MainWindow : Window
         var folder = await TryOpenBookmarkAsync(ViewModel.WallpaperFolderBookmark);
         if (folder is null)
         {
-            ViewModel.StatusMessage = "macOS no longer grants access to the saved wallpaper folder. Choose it again with Browse.";
+            ViewModel.StatusMessage = "Access to the saved wallpaper folder is no longer available. Choose it again with Browse.";
             return;
         }
 
         var folderPath = folder.TryGetLocalPath() ?? ViewModel.WallpaperDirectory;
         if (string.IsNullOrWhiteSpace(folderPath))
         {
-            ViewModel.StatusMessage = "macOS reopened the saved folder but did not provide a usable local path.";
+            ViewModel.StatusMessage = "The saved folder reopened but did not provide a usable local path.";
             return;
         }
 
@@ -552,7 +571,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            ViewModel.StatusMessage = "macOS denied access to that folder. Choose it again with Browse.";
+            ViewModel.StatusMessage = "Access to that folder was denied. Choose it again with Browse.";
             return null;
         }
     }
@@ -797,16 +816,6 @@ public sealed class MainWindow : Window
         {
             Mode = BindingMode.TwoWay
         };
-    }
-
-    private static WindowIcon LoadAppIcon()
-    {
-        return new WindowIcon(AssetLoader.Open(new Uri("avares://WallpaperSwitcher/Assets/AppIcon.png")));
-    }
-
-    private static WindowIcon LoadTrayIcon()
-    {
-        return new WindowIcon(AssetLoader.Open(new Uri("avares://WallpaperSwitcher/Assets/TrayIcon.png")));
     }
 
 }

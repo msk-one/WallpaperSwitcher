@@ -9,6 +9,15 @@ public static class LaunchAtLoginService
 {
     private const string AppName = "WallpaperSwitcher";
     private const string WindowsRunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+
+    /// <summary>
+    /// Passed to the autostart entry so signing in starts the app into the tray
+    /// instead of putting a window on screen. Windows only for now; the macOS
+    /// LaunchAgent and Linux .desktop entries keep the current behaviour until
+    /// those platforms have been re-verified.
+    /// </summary>
+    public const string MinimizedArgument = "--minimized";
+
     private const string MacLaunchAgentId = "com.wallpaperswitcher.app";
     private const string LinuxDesktopFileName = "wallpaperswitcher.desktop";
 
@@ -24,10 +33,7 @@ public static class LaunchAtLoginService
         {
             if (OperatingSystem.IsWindows())
             {
-                using var key = Registry.CurrentUser.OpenSubKey(WindowsRunKey, writable: false);
-                var value = key?.GetValue(AppName) as string;
-                return !string.IsNullOrWhiteSpace(value)
-                    && value.Contains(executablePath, StringComparison.OrdinalIgnoreCase);
+                return IsEnabledWindows(executablePath);
             }
 
             if (OperatingSystem.IsMacOS())
@@ -89,16 +95,61 @@ public static class LaunchAtLoginService
     }
 
     [SupportedOSPlatform("windows")]
+    private static bool IsEnabledWindows(string executablePath)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(WindowsRunKey, writable: false);
+        if (key?.GetValue(AppName) is not string value || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var registeredPath = WindowsRunCommand.ParseExecutablePath(value);
+        if (string.IsNullOrWhiteSpace(registeredPath))
+        {
+            return false;
+        }
+
+        if (string.Equals(registeredPath, executablePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // The entry points somewhere else: the portable build was moved, or the
+        // user upgraded from the zip to the installer. Repointing it is what the
+        // user asked for when they ticked the box, and reporting "off" here would
+        // leave a dangling entry aimed at a path that may no longer exist.
+        AppLog.Info($"Repointing stale launch-at-login entry from '{registeredPath}' to '{executablePath}'.");
+        try
+        {
+            WriteWindowsRunValue(executablePath);
+        }
+        catch (Exception ex) when (IsLaunchAtLoginException(ex))
+        {
+            AppLog.Warn($"Could not repoint launch-at-login entry: {ex.Message}");
+            return false;
+        }
+
+        return true;
+    }
+
+    [SupportedOSPlatform("windows")]
     private static void SetWindowsLaunchAtLogin(bool enabled, string executablePath)
     {
-        using var key = Registry.CurrentUser.CreateSubKey(WindowsRunKey);
         if (enabled)
         {
-            key.SetValue(AppName, QuoteCommandPath(executablePath));
+            WriteWindowsRunValue(executablePath);
             return;
         }
 
+        using var key = Registry.CurrentUser.CreateSubKey(WindowsRunKey);
         key.DeleteValue(AppName, throwOnMissingValue: false);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void WriteWindowsRunValue(string executablePath)
+    {
+        using var key = Registry.CurrentUser.CreateSubKey(WindowsRunKey);
+        key.SetValue(AppName, WindowsRunCommand.Format(executablePath, MinimizedArgument));
     }
 
     private static void SetMacLaunchAtLogin(bool enabled, string executablePath)
@@ -147,7 +198,7 @@ public static class LaunchAtLoginService
             Type=Application
             Name=Wallpaper Switcher
             Comment=Keep day and night wallpapers rotating
-            Exec={{QuoteCommandPath(executablePath)}}
+            Exec={{QuoteDesktopExecArgument(executablePath)}}
             Terminal=false
             X-GNOME-Autostart-enabled=true
             """;
@@ -181,7 +232,12 @@ public static class LaunchAtLoginService
         return Path.Combine(basePath, "autostart", LinuxDesktopFileName);
     }
 
-    private static string QuoteCommandPath(string path)
+    /// <summary>
+    /// Quotes a path for the <c>Exec=</c> line of a freedesktop .desktop file,
+    /// which does require backslash escaping. Windows Run values must not use
+    /// this — see <see cref="WindowsRunCommand"/>.
+    /// </summary>
+    private static string QuoteDesktopExecArgument(string path)
     {
         return "\"" + path.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
     }

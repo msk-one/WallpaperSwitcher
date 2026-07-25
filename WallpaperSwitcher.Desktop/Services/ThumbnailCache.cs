@@ -1,17 +1,28 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform;
 
 namespace WallpaperSwitcher.Desktop.Services;
 
+/// <summary>
+/// Decodes preview thumbnails, keeping the most recently used ones.
+/// </summary>
+/// <remarks>
+/// The cache is bounded because it used to grow without limit: a folder with a
+/// few thousand images held every decoded bitmap for the lifetime of the process
+/// and nothing ever disposed them. With the list virtualized only a screenful is
+/// live at a time, so a small cap covers scrolling without the footprint.
+/// </remarks>
 public sealed class ThumbnailCache : IValueConverter, IDisposable
 {
     public static ThumbnailCache Instance { get; } = new();
 
     private const int DecodeWidth = 144;
-    private readonly ConcurrentDictionary<string, Bitmap?> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private const int MaximumEntries = 300;
+
+    private readonly object _gate = new();
+    private readonly Dictionary<string, Bitmap?> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly LinkedList<string> _recency = new();
 
     private ThumbnailCache()
     {
@@ -24,7 +35,32 @@ public sealed class ThumbnailCache : IValueConverter, IDisposable
             return null;
         }
 
-        return _cache.GetOrAdd(path, LoadThumbnail);
+        lock (_gate)
+        {
+            if (_cache.TryGetValue(path, out var cached))
+            {
+                Touch(path);
+                return cached;
+            }
+        }
+
+        var thumbnail = LoadThumbnail(path);
+
+        lock (_gate)
+        {
+            // Another thread may have populated it while we decoded.
+            if (_cache.TryGetValue(path, out var existing))
+            {
+                thumbnail?.Dispose();
+                Touch(path);
+                return existing;
+            }
+
+            _cache[path] = thumbnail;
+            _recency.AddFirst(path);
+            EvictWhileOverCapacity();
+            return thumbnail;
+        }
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
@@ -34,12 +70,37 @@ public sealed class ThumbnailCache : IValueConverter, IDisposable
 
     public void Dispose()
     {
-        foreach (var thumbnail in _cache.Values)
+        lock (_gate)
         {
-            thumbnail?.Dispose();
-        }
+            foreach (var thumbnail in _cache.Values)
+            {
+                thumbnail?.Dispose();
+            }
 
-        _cache.Clear();
+            _cache.Clear();
+            _recency.Clear();
+        }
+    }
+
+    private void Touch(string path)
+    {
+        if (_recency.Remove(path))
+        {
+            _recency.AddFirst(path);
+        }
+    }
+
+    private void EvictWhileOverCapacity()
+    {
+        while (_recency.Count > MaximumEntries && _recency.Last is { } oldest)
+        {
+            _recency.RemoveLast();
+
+            if (_cache.Remove(oldest.Value, out var evicted))
+            {
+                evicted?.Dispose();
+            }
+        }
     }
 
     private static Bitmap? LoadThumbnail(string path)

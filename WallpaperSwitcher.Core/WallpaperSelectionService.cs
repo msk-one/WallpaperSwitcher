@@ -40,15 +40,10 @@ public static class WallpaperSelectionService
             .Where(path => SupportedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
             .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select(path =>
-            {
-                var category = preferredAssignments is not null
-                    && preferredAssignments.TryGetValue(path, out var savedCategory)
-                        ? savedCategory
-                        : InferCategoryFromName(Path.GetFileNameWithoutExtension(path));
-
-                return new WallpaperItem(Path.GetFileName(path), path, category);
-            })
+            .Select(path => new WallpaperItem(
+                Path.GetFileName(path),
+                path,
+                ResolveCategory(preferredAssignments, wallpaperDirectory, path)))
             .ToList();
 
         var message = skippedDirectories == 0
@@ -56,6 +51,61 @@ public static class WallpaperSelectionService
             : $"Skipped {skippedDirectories} folder(s) that could not be read.";
 
         return new WallpaperLoadResult(files, skippedDirectories, message);
+    }
+
+    /// <summary>
+    /// The key an assignment is stored and looked up under: the path relative to
+    /// the wallpaper folder where possible, otherwise the absolute path.
+    /// </summary>
+    /// <remarks>
+    /// Keying on the relative path is what lets Day/Night choices survive the
+    /// folder being renamed or moved. Anything outside the folder, or on another
+    /// volume, stays absolute so it remains meaningful.
+    /// </remarks>
+    public static string BuildAssignmentKey(string baseDirectory, string fullPath)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory) || !Path.IsPathRooted(fullPath))
+        {
+            return fullPath;
+        }
+
+        try
+        {
+            var relative = Path.GetRelativePath(baseDirectory.Trim(), fullPath);
+            return relative.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(relative)
+                ? fullPath
+                : relative;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return fullPath;
+        }
+    }
+
+    /// <summary>
+    /// Looks up a saved category, preferring the folder-relative key and falling
+    /// back to the absolute path so settings files written before the change
+    /// keep working.
+    /// </summary>
+    public static WallpaperCategory ResolveCategory(
+        IReadOnlyDictionary<string, WallpaperCategory>? preferredAssignments,
+        string baseDirectory,
+        string fullPath)
+    {
+        if (preferredAssignments is not null)
+        {
+            if (preferredAssignments.TryGetValue(BuildAssignmentKey(baseDirectory, fullPath), out var byRelative))
+            {
+                return byRelative;
+            }
+
+            if (preferredAssignments.TryGetValue(fullPath, out var byAbsolute))
+            {
+                return byAbsolute;
+            }
+        }
+
+        return InferCategoryFromName(Path.GetFileNameWithoutExtension(fullPath));
     }
 
     public static WallpaperCategory InferCategoryFromName(string name)
@@ -143,11 +193,33 @@ public static class WallpaperSelectionService
 
             foreach (var childDirectory in childDirectories)
             {
+                // Junctions and symlinks can point back up the tree. Following
+                // them turns a scan of somewhere like C:\Users\<name> into a loop
+                // that collects the same files over and over until the paths grow
+                // too long. Explorer's own search skips reparse points too.
+                if (IsReparsePoint(childDirectory))
+                {
+                    continue;
+                }
+
                 pendingDirectories.Push(childDirectory);
             }
         }
 
         return collectedFiles;
+    }
+
+    private static bool IsReparsePoint(string directory)
+    {
+        try
+        {
+            return (new DirectoryInfo(directory).Attributes & FileAttributes.ReparsePoint) != 0;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // If the attributes cannot be read, treat it as one and skip it.
+            return true;
+        }
     }
 }
 

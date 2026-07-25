@@ -16,15 +16,10 @@ public static class StorageFolderWallpaperLoader
             .Where(path => WallpaperSelectionService.SupportedExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase))
             .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
             .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select(path =>
-            {
-                var category = preferredAssignments is not null
-                    && preferredAssignments.TryGetValue(path, out var savedCategory)
-                        ? savedCategory
-                        : WallpaperSelectionService.InferCategoryFromName(Path.GetFileNameWithoutExtension(path));
-
-                return new WallpaperItem(Path.GetFileName(path), path, category);
-            })
+            .Select(path => new WallpaperItem(
+                Path.GetFileName(path),
+                path,
+                WallpaperSelectionService.ResolveCategory(preferredAssignments, folder.TryGetLocalPath() ?? string.Empty, path)))
             .ToList();
 
         var warning = skippedFolders == 0

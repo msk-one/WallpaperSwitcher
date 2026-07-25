@@ -2,6 +2,14 @@ namespace WallpaperSwitcher;
 
 public sealed class AppSettings
 {
+    /// <summary>
+    /// Format marker for the settings file. Version 2 stores assignment paths
+    /// relative to <see cref="WallpaperDirectory"/> and omits Ignore entries.
+    /// </summary>
+    public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+
+    public const int CurrentSchemaVersion = 2;
+
     public string WallpaperDirectory { get; set; } = string.Empty;
 
     public string? WallpaperFolderBookmark { get; set; }
@@ -26,6 +34,10 @@ public sealed class AppSettings
 
 public sealed class WallpaperAssignment
 {
+    /// <summary>
+    /// Relative to the wallpaper folder on disk; always absolute in memory.
+    /// <see cref="SettingsStore"/> converts between the two.
+    /// </summary>
     public string Path { get; set; } = string.Empty;
 
     public WallpaperCategory Category { get; set; } = WallpaperCategory.Ignore;

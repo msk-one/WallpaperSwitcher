@@ -12,6 +12,9 @@
   <ItemGroup>
     <PackageReference Include="Avalonia.Desktop" Version="12.0.2" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.2" />
+    <!-- Registry access and the power/time/display notifications used on Windows.
+         Needed explicitly because the target framework is plain net9.0. -->
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="9.0.0" />
   </ItemGroup>
 
   <ItemGroup>

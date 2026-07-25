@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace WallpaperSwitcher;
 
@@ -22,7 +23,12 @@ public sealed class SettingsStore
 {
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
-        WriteIndented = true
+        WriteIndented = true,
+
+        // Enum names rather than ordinals, so the file stays readable and stays
+        // valid if a value is ever inserted into the middle of an enum. The
+        // converter still reads the numbers written by earlier versions.
+        Converters = { new JsonStringEnumConverter() }
     };
 
     public SettingsStore()
@@ -113,7 +119,7 @@ public sealed class SettingsStore
             // Write-then-rename. A direct write truncates first, so an interrupted
             // save (crash, full disk, antivirus holding the handle) would leave a
             // half-written file that the next load has to quarantine.
-            var json = JsonSerializer.Serialize(settings, _jsonOptions);
+            var json = JsonSerializer.Serialize(ToPersistedForm(settings), _jsonOptions);
             File.WriteAllText(temporaryPath, json);
             File.Move(temporaryPath, SettingsPath, overwrite: true);
             return true;
@@ -124,6 +130,42 @@ public sealed class SettingsStore
             TryDelete(temporaryPath);
             return false;
         }
+    }
+
+    /// <summary>
+    /// Rewrites assignment paths relative to the wallpaper folder and drops
+    /// Ignore entries.
+    /// </summary>
+    /// <remarks>
+    /// Absolute paths meant that renaming or moving the wallpaper folder made
+    /// every stored assignment stop matching, so the user's Day/Night choices
+    /// were silently replaced by filename guesses. Dropping Ignore entries also
+    /// lets newly added images pick up name inference instead of being pinned to
+    /// a default someone never chose.
+    /// </remarks>
+    private static AppSettings ToPersistedForm(AppSettings settings)
+    {
+        var baseDirectory = settings.WallpaperDirectory.Trim();
+
+        return new AppSettings
+        {
+            SchemaVersion = AppSettings.CurrentSchemaVersion,
+            WallpaperDirectory = settings.WallpaperDirectory,
+            WallpaperFolderBookmark = settings.WallpaperFolderBookmark,
+            DayStartsAt = settings.DayStartsAt,
+            NightStartsAt = settings.NightStartsAt,
+            ShuffleCadence = settings.ShuffleCadence,
+            WallpaperFit = settings.WallpaperFit,
+            StartMinimized = settings.StartMinimized,
+            Assignments = settings.Assignments
+                .Where(assignment => assignment.Category != WallpaperCategory.Ignore)
+                .Select(assignment => new WallpaperAssignment
+                {
+                    Path = WallpaperSelectionService.BuildAssignmentKey(baseDirectory, assignment.Path),
+                    Category = assignment.Category
+                })
+                .ToList()
+        };
     }
 
     private void QuarantineCorruptFile()

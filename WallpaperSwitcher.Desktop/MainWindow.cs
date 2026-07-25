@@ -319,7 +319,13 @@ public sealed class MainWindow : Window
 
         var wallpaperItems = new ItemsControl
         {
-            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildWallpaperItemRow(), false)
+            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildWallpaperItemRow(), false),
+
+            // Without virtualization every row is materialized and every
+            // thumbnail decoded up front, and an OS light/dark switch rebuilds
+            // the whole tree (see ActualThemeVariantChanged), freezing the app
+            // for seconds on a folder with hundreds of images.
+            ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel())
         };
         wallpaperItems.Bind(ItemsControl.ItemsSourceProperty, OneWay(nameof(MainWindowViewModel.WallpaperItems)));
 
@@ -488,6 +494,16 @@ public sealed class MainWindow : Window
             return;
         }
 
+        // StorageFolderWallpaperLoader walks the tree one async item at a time
+        // through the platform storage provider, which is far slower than
+        // Directory.GetFiles. It exists only so macOS security-scoped bookmarks
+        // keep working; nothing else needs it.
+        if (!OperatingSystem.IsMacOS())
+        {
+            ViewModel.SetWallpaperFolder(folderPath);
+            return;
+        }
+
         var bookmark = await TrySaveBookmarkAsync(selectedFolder);
         var loadResult = await StorageFolderWallpaperLoader.LoadAsync(
             selectedFolder,
@@ -498,6 +514,12 @@ public sealed class MainWindow : Window
 
     private async Task RefreshFolderAsync()
     {
+        if (!OperatingSystem.IsMacOS())
+        {
+            ViewModel.RefreshFolder();
+            return;
+        }
+
         var folder = await TryOpenSelectedStorageFolderAsync();
         if (folder is not null)
         {

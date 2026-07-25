@@ -225,6 +225,14 @@ public sealed class PlatformWallpaperService : IWallpaperService
 
             process.Start();
 
+            // Start draining both pipes before waiting. A child that writes more
+            // than the pipe buffer blocks until someone reads it, so reading after
+            // WaitForExit turns a working command into a five-second stall and a
+            // spurious timeout. "xfconf-query -c xfce4-desktop -l" produces enough
+            // output to hit this on a desktop with many properties.
+            var standardOutput = process.StandardOutput.ReadToEndAsync();
+            var standardError = process.StandardError.ReadToEndAsync();
+
             if (!process.WaitForExit(5000))
             {
                 process.Kill(entireProcessTree: true);
@@ -232,8 +240,8 @@ public sealed class PlatformWallpaperService : IWallpaperService
                 return false;
             }
 
-            output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
+            output = standardOutput.GetAwaiter().GetResult();
+            var error = standardError.GetAwaiter().GetResult();
 
             if (process.ExitCode == 0)
             {

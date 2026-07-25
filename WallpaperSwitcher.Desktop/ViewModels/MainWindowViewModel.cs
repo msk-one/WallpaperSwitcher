@@ -11,6 +11,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly SettingsStore _settingsStore;
     private readonly IWallpaperService _wallpaperService;
     private readonly WallpaperScheduler _scheduler;
+    private readonly WindowsSystemEventsBridge? _systemEvents;
     private readonly IReadOnlyList<ShuffleOption> _shuffleOptions =
     [
         new(ShuffleCadence.Hourly, "Every hour"),
@@ -61,6 +62,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _selectedFitOption = _fitOptions.First(option => option.Value == WallpaperFit.Fill);
         _startAtLogin = LaunchAtLoginService.IsEnabled();
         LoadSettings();
+
+        _systemEvents = WindowsSystemEventsBridge.CreateIfSupported(
+            () => Avalonia.Threading.Dispatcher.UIThread.Post(() => ApplyWallpaperAndReschedule(forceApply: true)));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -251,6 +255,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
+        _systemEvents?.Dispose();
         _scheduler.Dispose();
     }
 
@@ -304,7 +309,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private Dictionary<string, WallpaperCategory> BuildAssignmentMap()
     {
-        return WallpaperItems.ToDictionary(item => item.FullPath, item => item.Category, StringComparer.OrdinalIgnoreCase);
+        // Keyed relative to the wallpaper folder so assignments still match after
+        // the folder is renamed or moved.
+        var baseDirectory = WallpaperDirectory.Trim();
+
+        return WallpaperItems.ToDictionary(
+            item => WallpaperSelectionService.BuildAssignmentKey(baseDirectory, item.FullPath),
+            item => item.Category,
+            StringComparer.OrdinalIgnoreCase);
     }
 
     private void RefreshWallpapers(IReadOnlyDictionary<string, WallpaperCategory>? preferredAssignments)
@@ -496,12 +508,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return false;
         }
 
-        if (WallpaperItems.Count == 0)
-        {
-            StatusMessage = "No supported wallpaper images were found in that folder or its subfolders.";
-            return false;
-        }
-
         settings.WallpaperDirectory = WallpaperDirectory.Trim();
         settings.WallpaperFolderBookmark = _wallpaperFolderBookmark;
         settings.DayStartsAt = dayStart;
@@ -509,13 +515,26 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         settings.ShuffleCadence = SelectedShuffleOption.Value;
         settings.WallpaperFit = SelectedFitOption.Value;
         settings.StartMinimized = StartMinimized;
-        settings.Assignments = WallpaperItems
-            .Select(item => new WallpaperAssignment
-            {
-                Path = item.FullPath,
-                Category = item.Category
-            })
-            .ToList();
+
+        // An empty image list must not block the save. The tray's cadence radios
+        // and "Swap day/night hours" both call Save(), so refusing here made those
+        // silently revert on restart for anyone who had not picked a folder yet.
+        // It must also not overwrite a good assignment list with an empty one.
+        if (WallpaperItems.Count > 0)
+        {
+            settings.Assignments = WallpaperItems
+                .Select(item => new WallpaperAssignment
+                {
+                    Path = item.FullPath,
+                    Category = item.Category
+                })
+                .ToList();
+        }
+        else
+        {
+            settings.Assignments = _settingsStore.Load().Assignments;
+            StatusMessage = "No supported wallpaper images were found in that folder or its subfolders.";
+        }
 
         return true;
     }

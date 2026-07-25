@@ -9,6 +9,11 @@ RUNTIME="${1:-osx-arm64}"
 CONFIGURATION="${CONFIGURATION:-Release}"
 ICON_BUNDLE_FILE="AppIcon"
 
+# Read the default from Directory.Build.props so a local run matches a release
+# build. Override with VERSION=1.2.3 (the release workflow passes the tag).
+VERSION="${VERSION:-$(sed -n 's/.*<VersionPrefix>\(.*\)<\/VersionPrefix>.*/\1/p' "$ROOT_DIR/Directory.Build.props" | head -n 1)}"
+VERSION="${VERSION:-1.0.0}"
+
 if [[ "$RUNTIME" != osx-* ]]; then
   echo "Runtime must be a macOS runtime such as osx-arm64 or osx-x64." >&2
   exit 1
@@ -33,7 +38,8 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 STAGING_DIR="$BUILD_ROOT/dmg-stage"
 DMG_DIR="$ROOT_DIR/artifacts/dmg"
-DMG_PATH="$DMG_DIR/$APP_NAME-$RUNTIME.dmg"
+# Version in the filename so successive releases do not overwrite each other.
+DMG_PATH="$DMG_DIR/$APP_NAME-$VERSION-$RUNTIME.dmg"
 trap 'rm -rf "$BUILD_ROOT"' EXIT
 
 dotnet publish "$PROJECT" \
@@ -43,6 +49,8 @@ dotnet publish "$PROJECT" \
   -p:PublishSingleFile=true \
   -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:PublishReadyToRun=false \
+  -p:DebugType=none \
+  -p:Version="$VERSION" \
   -o "$PUBLISH_DIR"
 
 for native_library in libSkiaSharp.dylib libHarfBuzzSharp.dylib libAvaloniaNative.dylib; do
@@ -109,9 +117,9 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>1.0.0</string>
+  <string>$VERSION</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>$VERSION</string>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>

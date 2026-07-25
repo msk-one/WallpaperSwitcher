@@ -115,7 +115,38 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public string SettingsPath => _settingsStore.SettingsPath;
 
-    public string SupportedFileSummary => "Supported files: .jpg, .jpeg, .png, .bmp, .heic, .heif, .webp, .tif, .tiff. Subfolders are scanned.";
+    /// <summary>
+    /// Shown in the status bar so a bug report can quote it without the reporter
+    /// having to find a log file.
+    /// </summary>
+    public static string AppVersion { get; } = ResolveAppVersion();
+
+    public string VersionAndSettingsPath => $"v{AppVersion}  ·  {SettingsPath}";
+
+    private static string ResolveAppVersion()
+    {
+        var informational = typeof(MainWindowViewModel).Assembly
+            .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+            .FirstOrDefault()?.InformationalVersion;
+
+        if (string.IsNullOrWhiteSpace(informational))
+        {
+            return "unknown";
+        }
+
+        // Strip the "+<commit sha>" suffix; the full string is in the log.
+        var plus = informational.IndexOf('+');
+        return plus < 0 ? informational : informational[..plus];
+    }
+
+    // Split deliberately: the first group is verified to preview and apply. The
+    // second is accepted but depends on image codecs that are not present on
+    // every machine, so promising it outright would be misleading.
+    public string SupportedFileSummary =>
+        "Supported files: .jpg, .jpeg, .png, .bmp, .gif, .tif, .tiff. "
+        + ".heic, .heif and .webp also work when Windows has the matching codec installed, "
+        + "and are skipped with a note in the log when it does not. Subfolders are scanned.";
 
     public string? WallpaperFolderBookmark => _wallpaperFolderBookmark;
 

@@ -378,6 +378,18 @@ public sealed class MainWindow : Window
             CornerRadius = new CornerRadius(4),
             ClipToBounds = true
         };
+        // Shown when the decoder returns nothing, so a format Skia cannot read
+        // (HEIC/HEIF, TIFF) reads as "no preview" rather than a blank row that
+        // looks like the app is broken.
+        var previewPlaceholder = new TextBlock
+        {
+            Text = "no preview",
+            FontSize = 10,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = _palette.Brush(_palette.MutedText)
+        };
+
         var preview = new Image
         {
             Stretch = Stretch.UniformToFill
@@ -387,7 +399,11 @@ public sealed class MainWindow : Window
             Mode = BindingMode.OneWay,
             Converter = ThumbnailCache.Instance
         });
-        previewFrame.Child = preview;
+
+        var previewStack = new Panel();
+        previewStack.Children.Add(previewPlaceholder);
+        previewStack.Children.Add(preview);
+        previewFrame.Child = previewStack;
         Grid.SetColumn(previewFrame, 0);
         row.Children.Add(previewFrame);
 
@@ -465,7 +481,7 @@ public sealed class MainWindow : Window
             Foreground = _palette.Brush(_palette.MutedText),
             Margin = new Thickness(12, 0, 0, 0)
         };
-        settings.Bind(TextBlock.TextProperty, OneWay(nameof(MainWindowViewModel.SettingsPath)));
+        settings.Bind(TextBlock.TextProperty, OneWay(nameof(MainWindowViewModel.VersionAndSettingsPath)));
         Grid.SetColumn(settings, 1);
 
         grid.Children.Add(status);

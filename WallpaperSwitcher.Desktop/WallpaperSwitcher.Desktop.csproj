@@ -7,6 +7,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Committed asset; regenerate with scripts/build-windows-icon.ps1 when the
+         artwork changes. Without this the executable carries the stock .NET icon
+         in the taskbar, Explorer, Add/Remove Programs and the SmartScreen dialog. -->
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

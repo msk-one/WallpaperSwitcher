@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
+#
+# Development convenience only. Releases are built by
+# .github/workflows/release.yml, which runs each target on its own OS.
+#
+# In particular, macOS artifacts produced by this script on a non-macOS host will
+# NOT run: arm64 macOS binaries need at least an ad-hoc signature to execute, and
+# dotnet publish only applies one when it runs on macOS.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$ROOT_DIR/WallpaperSwitcher.Desktop/WallpaperSwitcher.Desktop.csproj"
 CONFIGURATION="${CONFIGURATION:-Release}"
 export AVALONIA_TELEMETRY_OPTOUT="${AVALONIA_TELEMETRY_OPTOUT:-1}"
-export DOTNET_CLI_HOME="${DOTNET_CLI_HOME:-${TMPDIR:-/tmp}/dotnet-home}"
+# TMPDIR is unset under Git Bash on Windows, where a literal /tmp would be
+# resolved by dotnet.exe as C:\tmp.
+export DOTNET_CLI_HOME="${DOTNET_CLI_HOME:-${TMPDIR:-${TEMP:-/tmp}}/dotnet-home}"
 mkdir -p "$DOTNET_CLI_HOME"
 RUNTIMES=(
   "win-x64"
@@ -26,6 +35,7 @@ for runtime in "${RUNTIMES[@]}"; do
     -p:PublishSingleFile=true \
     -p:IncludeNativeLibrariesForSelfExtract=true \
     -p:PublishReadyToRun=false \
+    -p:DebugType=none \
     -o "$output"
 
   case "$runtime" in
@@ -35,10 +45,11 @@ for runtime in "${RUNTIMES[@]}"; do
     linux-*)
       native_libraries=(libSkiaSharp.so libHarfBuzzSharp.so)
       ;;
-    win-*)
-      native_libraries=(libSkiaSharp.dll libHarfBuzzSharp.dll av_libglesv2.dll)
-      ;;
     *)
+      # Windows needs nothing here: IncludeNativeLibrariesForSelfExtract embeds
+      # the Skia/HarfBuzz/ANGLE DLLs in the single file, verified by running the
+      # published executable from an otherwise empty directory. Copying them
+      # alongside only shadowed the embedded copies with 18 MB of duplicates.
       native_libraries=()
       ;;
   esac

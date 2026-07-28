@@ -56,6 +56,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private string? _wallpaperFolderBookmark;
     private bool _startAtLogin;
     private bool _startMinimized;
+    private bool _applyInFlight;
+    private bool _applyRequestedWhileBusy;
 
     public MainWindowViewModel(SettingsStore settingsStore, IWallpaperService wallpaperService)
     {
@@ -386,22 +388,45 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void Save()
     {
+        if (!PersistSettings())
+        {
+            return;
+        }
+
+        // Autosave has no Save button to acknowledge it, so the status bar is the
+        // only confirmation. A change that does move the wallpaper overwrites this
+        // with the more specific "... wallpaper active" line.
+        StatusMessage = "Settings saved. Wallpaper schedule is active.";
+
+        // Not a forced apply. Autosave runs on every toggle, every schedule drag
+        // and every cadence change, and forcing here meant each of those paid for
+        // a full SystemParametersInfo broadcast even when the correct wallpaper
+        // was already on screen. The schedule is still rearmed, and the wallpaper
+        // is reapplied only when the target actually changed.
+        ApplyWallpaperAndReschedule(forceApply: false);
+    }
+
+    /// <summary>
+    /// Writes settings to disk without touching the wallpaper, so callers choose
+    /// whether the change warrants reapplying.
+    /// </summary>
+    private bool PersistSettings()
+    {
         SyncWallpaperListIfFolderChanged();
 
         if (!TryBuildSettings(out var settings))
         {
-            return;
+            return false;
         }
 
         if (!_settingsStore.TrySave(settings, out var saveError))
         {
             StatusMessage = saveError ?? "Could not save settings.";
             AppLog.Error($"Saving settings failed: {saveError}");
-            return;
+            return false;
         }
 
-        StatusMessage = "Settings saved. Wallpaper schedule is active.";
-        ApplyWallpaperAndReschedule(forceApply: true);
+        return true;
     }
 
     public void ApplyNow()
@@ -438,8 +463,35 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         SelectedShuffleOption = _shuffleOptions.FirstOrDefault(option => option.Value == cadence)
             ?? _selectedShuffleOption;
+
+        // Cadence says how often the wallpaper changes, not that it should change
+        // now. Without this the new cadence produces a new cycle key, the key no
+        // longer matches the one the current image was picked under, and simply
+        // choosing "every week" swapped the wallpaper on the spot.
+        RebaseCycleKeyToCurrentWallpaper();
+
         StatusMessage = $"Shuffles {SelectedShuffleOption.Label.ToLowerInvariant()}.";
         Save();
+    }
+
+    /// <summary>
+    /// Re-anchors the current image to the cycle it would belong to under the
+    /// settings now in force, so a settings change does not read as a new cycle.
+    /// </summary>
+    private void RebaseCycleKeyToCurrentWallpaper()
+    {
+        if (string.IsNullOrWhiteSpace(_lastAppliedPath))
+        {
+            return;
+        }
+
+        var now = DateTime.Now;
+        var category = WallpaperScheduleCalculator.GetCurrentCategory(now, DayStart, NightStart);
+        _lastAppliedCycleKey = WallpaperScheduleCalculator.BuildCycleKey(
+            now,
+            category,
+            DayStart,
+            SelectedShuffleOption.Value);
     }
 
     public void SetStartAtLogin(bool enabled)
@@ -459,7 +511,12 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         SelectedFitOption = _fitOptions.FirstOrDefault(option => option.Value == fit) ?? _selectedFitOption;
         StatusMessage = $"Fit set to {SelectedFitOption.Label.ToLowerInvariant()}.";
-        Save();
+
+        // Fit is written to the registry as part of applying, so unlike every
+        // other setting it has no visible effect until the wallpaper is set
+        // again. Hence a forced apply where Save would use an unforced one.
+        PersistSettings();
+        ApplyWallpaperAndReschedule(forceApply: true);
     }
 
     public void Dispose()
@@ -636,33 +693,117 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        // Walk forward through the candidates if the chosen one will not apply.
-        // An image the OS cannot decode must not stall the whole cycle: with a
-        // deterministic cycle key, returning here would make the watchdog retry
-        // the same file every minute until the next boundary.
         var startIndex = Math.Max(0, candidates.IndexOf(targetWallpaper));
+        BeginApply(candidates, startIndex, cycleKey, targetCategory, now, dayStart, nightStart);
+    }
+
+    /// <summary>
+    /// Runs the actual wallpaper change on a background thread and applies the
+    /// result back on the UI thread.
+    /// </summary>
+    /// <remarks>
+    /// On Windows the apply ends in SystemParametersInfo with SPIF_SENDWININICHANGE,
+    /// which broadcasts WM_SETTINGCHANGE to every top-level window and blocks
+    /// until they answer or time out. Doing that inline froze the whole app for
+    /// seconds at a time — the tray menu would not open, the window would not
+    /// paint, and startup stalled before the first frame.
+    /// </remarks>
+    private async void BeginApply(
+        IReadOnlyList<string> candidates,
+        int startIndex,
+        string cycleKey,
+        WallpaperCategory targetCategory,
+        DateTime now,
+        TimeSpan dayStart,
+        TimeSpan nightStart)
+    {
+        if (_applyInFlight)
+        {
+            // Coalesce: the watchdog, a settings change and a manual cycle can all
+            // land at once. Re-evaluating once at the end reaches the same result
+            // as queueing each of them, without a backlog of broadcasts.
+            _applyRequestedWhileBusy = true;
+            return;
+        }
+
+        _applyInFlight = true;
+        var fit = SelectedFitOption.Value;
+
+        try
+        {
+            var outcome = await Task.Run(() => ApplyFirstUsable(candidates, startIndex, fit));
+
+            foreach (var failure in outcome.Failed)
+            {
+                _failedWallpapers.Add(failure.Path);
+                AppLog.Warn($"Could not apply '{failure.Path}': {failure.Error}");
+            }
+
+            if (outcome.Applied is { } applied)
+            {
+                _lastAppliedPath = applied;
+                _lastAppliedCycleKey = cycleKey;
+                StatusMessage = $"{targetCategory} wallpaper active: {Path.GetFileName(applied)}";
+                UpdateHero(now, targetCategory, applied, dayStart, nightStart);
+            }
+            else
+            {
+                StatusMessage = outcome.LastError ?? "Unable to change the wallpaper.";
+            }
+        }
+        catch (Exception ex)
+        {
+            // This is an async void continuation: anything that escapes would go
+            // to the unhandled-exception handler and take the app down.
+            AppLog.Error($"Applying the wallpaper failed: {ex}");
+            StatusMessage = "Unable to change the wallpaper. See the log for details.";
+        }
+        finally
+        {
+            _applyInFlight = false;
+
+            if (_applyRequestedWhileBusy)
+            {
+                _applyRequestedWhileBusy = false;
+                ApplyWallpaperAndReschedule(forceApply: false);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Walks forward through the candidates until one applies. Runs off the UI
+    /// thread, so it touches no view-model state.
+    /// </summary>
+    /// <remarks>
+    /// An image the OS cannot decode must not stall the whole cycle: with a
+    /// deterministic cycle key, giving up on the first failure would make the
+    /// watchdog retry the same file every minute until the next boundary.
+    /// </remarks>
+    private ApplyOutcome ApplyFirstUsable(IReadOnlyList<string> candidates, int startIndex, WallpaperFit fit)
+    {
+        var failed = new List<(string Path, string? Error)>();
         string? lastError = null;
 
         for (var attempt = 0; attempt < candidates.Count; attempt++)
         {
             var candidate = candidates[(startIndex + attempt) % candidates.Count];
 
-            if (_wallpaperService.TryApply(candidate, SelectedFitOption.Value, out var errorMessage))
+            if (_wallpaperService.TryApply(candidate, fit, out var errorMessage))
             {
-                _lastAppliedPath = candidate;
-                _lastAppliedCycleKey = cycleKey;
-                StatusMessage = $"{targetCategory} wallpaper active: {Path.GetFileName(candidate)}";
-                UpdateHero(now, targetCategory, candidate, dayStart, nightStart);
-                return;
+                return new ApplyOutcome(candidate, null, failed);
             }
 
             lastError = errorMessage;
-            _failedWallpapers.Add(candidate);
-            AppLog.Warn($"Could not apply '{candidate}': {errorMessage}");
+            failed.Add((candidate, errorMessage));
         }
 
-        StatusMessage = lastError ?? "Unable to change the wallpaper.";
+        return new ApplyOutcome(null, lastError, failed);
     }
+
+    private sealed record ApplyOutcome(
+        string? Applied,
+        string? LastError,
+        IReadOnlyList<(string Path, string? Error)> Failed);
 
     private string PickNextWallpaper(IReadOnlyList<string> candidates)
     {

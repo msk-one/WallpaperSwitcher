@@ -36,6 +36,23 @@ public static class NavItemTheme
             }
         };
 
+        // Unselected is expressed as a style, not as a local value in the
+        // template. A property assigned in the template factory is a LocalValue,
+        // which outranks every Style setter, so setting Background/IsVisible
+        // there made the :selected setters below silently unreachable and the
+        // rail never showed which page you were on.
+        var normal = new Style(x => x.Nesting().Template().Name("PART_Background"))
+        {
+            Setters = { new Setter(Border.BackgroundProperty, Brushes.Transparent) }
+        };
+        theme.Add(normal);
+
+        var pillHidden = new Style(x => x.Nesting().Template().Name("PART_Pill"))
+        {
+            Setters = { new Setter(Visual.IsVisibleProperty, false) }
+        };
+        theme.Add(pillHidden);
+
         // Selected: subtle fill plus the accent pill.
         var selected = new Style(x => x.Nesting().Class(":selected"));
         selected.Children.Add(new Style(x => x.Nesting().Template().Name("PART_Background"))
@@ -65,8 +82,7 @@ public static class NavItemTheme
     {
         var background = new Border
         {
-            CornerRadius = new CornerRadius(4),
-            Background = Brushes.Transparent
+            CornerRadius = new CornerRadius(4)
         }.Named(scope, "PART_Background");
 
         var layout = new Panel();
@@ -76,8 +92,7 @@ public static class NavItemTheme
             Width = 3,
             CornerRadius = new CornerRadius(2),
             HorizontalAlignment = HorizontalAlignment.Left,
-            Margin = new Thickness(0, 8),
-            IsVisible = false
+            Margin = new Thickness(0, 8)
         }.Dyn(Border.BackgroundProperty, "AccentFillColorDefaultBrush").Named(scope, "PART_Pill");
         layout.Children.Add(pill);
 

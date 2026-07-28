@@ -34,13 +34,35 @@ public sealed class MainWindow : Window
     public MainWindow()
     {
         Title = "Wallpaper Switcher";
-        Width = 900;
-        Height = 620;
-        MinWidth = 720;
-        MinHeight = 520;
+
+        // The mockup calls for 900x620. That is the width at which the four-column
+        // grid exactly reaches the pane's right padding, so the last column sits
+        // flush against the edge and any scrollbar overlaps it. A little more room
+        // keeps the design's proportions while leaving the grid a real gutter, and
+        // the raised minimum stops the hero's buttons from being squeezed out.
+        // Height is set by the Settings page, which is the taller of the two: at
+        // 700 its last row ("Logs and settings file") sat half under the status
+        // bar, and because Fluent's scrollbars are overlays that only appear on
+        // hover, it read as clipped rather than scrollable.
+        Width = 960;
+        Height = 760;
+        MinWidth = 780;
+        MinHeight = 560;
         Icon = AppIcons.LoadAppIcon();
 
         this.Dyn(BackgroundProperty, "SolidBackgroundFillColorBaseBrush");
+
+        // Avalonia's drawn chrome offers full screen, minimize, maximize and
+        // close. Full screen makes no sense for a window this size, and it is the
+        // one caption button Windows itself never shows. Avalonia 12 tags each
+        // caption button with an ElementRole rather than a template part name,
+        // so the button is matched on that.
+        Styles.Add(new Style(x => x.PropertyEquals(
+            WindowDecorationProperties.ElementRoleProperty,
+            WindowDecorationsElementRole.FullScreenButton))
+        {
+            Setters = { new Setter(IsVisibleProperty, false) }
+        });
 
         // The 48px bar with the inline app icon is a Windows convention. macOS
         // owns the top-left for its traffic lights and Linux window managers vary
@@ -219,13 +241,17 @@ public sealed class MainWindow : Window
             shape.Dyn(Shape.StrokeProperty, "TextFillColorSecondaryBrush");
         }
         glyph.Margin = new Thickness(0, 0, 12, 0);
+        glyph.VerticalAlignment = VerticalAlignment.Center;
         Grid.SetColumn(glyph, 0);
         layout.Children.Add(glyph);
 
+        // No explicit LineHeight here. Pinning it to the design's 16px is below
+        // what Segoe UI Variable Text actually needs at 12px, which pushed the
+        // glyph box above the centre of the bar and clipped the descenders. The
+        // font's own metrics centre correctly.
         var status = new TextBlock
         {
             FontSize = 12,
-            LineHeight = 16,
             TextTrimming = TextTrimming.CharacterEllipsis,
             VerticalAlignment = VerticalAlignment.Center
         }.Dyn(ForegroundProperty, "TextFillColorSecondaryBrush");
@@ -241,7 +267,6 @@ public sealed class MainWindow : Window
         {
             Text = $"v{MainWindowViewModel.AppVersion}",
             FontSize = 12,
-            LineHeight = 16,
             Margin = new Thickness(12, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Center
         }.Dyn(ForegroundProperty, "TextFillColorSecondaryBrush");

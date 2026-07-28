@@ -192,12 +192,22 @@ public sealed class WallpapersPage : UserControl
         stack.Children.Add(warning);
 
         var image = new Image { Stretch = Stretch.UniformToFill };
-        image.Bind(Image.SourceProperty, new Binding(nameof(MainWindowViewModel.HeroThumbnailPath))
-        {
-            Converter = ThumbnailCache.Instance
-        });
         image.Bind(IsVisibleProperty, HeroIs(HeroState.Running));
         stack.Children.Add(image);
+
+        // Tag carries the path so the decode can be driven off a property change
+        // rather than a DataContext swap: the hero's DataContext is the view model
+        // for the window's whole life, and it is HeroThumbnailPath that moves.
+        // Decoding happens off the UI thread like the tiles, so applying a
+        // wallpaper never blocks the window while the new preview is read.
+        image.Bind(TagProperty, new Binding(nameof(MainWindowViewModel.HeroThumbnailPath)));
+        image.PropertyChanged += (_, args) =>
+        {
+            if (args.Property == TagProperty)
+            {
+                _ = LoadHeroThumbnailAsync(image);
+            }
+        };
 
         frame.Child = stack;
         return frame;
@@ -277,9 +287,18 @@ public sealed class WallpapersPage : UserControl
                 MinItemHeight = 87,
                 MinRowSpacing = 8,
                 MinColumnSpacing = 8,
-                ItemsStretch = UniformGridLayoutItemsStretch.Fill
+
+                // Uniform, not Fill: Fill stretches the width to close the gap
+                // but leaves the height at MinItemHeight, so tiles drifted off
+                // 16:9 as the window widened. Uniform scales both and keeps the
+                // ratio the mockup specifies.
+                ItemsStretch = UniformGridLayoutItemsStretch.Uniform
             },
-            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildTile(), true)
+            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildTile(), true),
+
+            // The pane's vertical scrollbar is an overlay, so without a gutter it
+            // sits on top of the last column.
+            Margin = new Thickness(0, 0, 12, 0)
         };
         repeater.Bind(ItemsRepeater.ItemsSourceProperty, new Binding(nameof(MainWindowViewModel.WallpaperItems)));
 
@@ -317,17 +336,17 @@ public sealed class WallpapersPage : UserControl
             }
         };
 
-        button.DataContextChanged += (sender, _) => UpdateTileVisuals(sender as Button);
+        button.DataContextChanged += (sender, args) =>
+        {
+            UpdateTileVisuals(sender as Button);
+            _ = LoadTileThumbnailAsync(sender as Button);
+        };
 
         var layers = new Panel();
 
         // Only the image is desaturated when ignored, so the badge and the
         // filename keep full contrast.
         var image = new Image { Stretch = Stretch.UniformToFill, Name = "PART_Image" };
-        image.Bind(Image.SourceProperty, new Binding(nameof(WallpaperItem.FullPath))
-        {
-            Converter = ThumbnailCache.Instance
-        });
         layers.Children.Add(image);
 
         layers.Children.Add(BuildBadge());
@@ -425,6 +444,79 @@ public sealed class WallpapersPage : UserControl
     /// Applies the badge, desaturation and accessible name for the tile's current
     /// category.
     /// </summary>
+    /// <summary>
+    /// Fills a tile's preview once the decode finishes, off the UI thread.
+    /// </summary>
+    /// <remarks>
+    /// ItemsRepeater recycles containers, so the DataContext can have moved to a
+    /// different image by the time the decode returns. Re-checking it afterwards
+    /// is what stops a stale bitmap landing on the wrong tile during a fast
+    /// scroll.
+    /// </remarks>
+    private static async Task LoadTileThumbnailAsync(Button? button)
+    {
+        var target = FindTileImage(button);
+        if (target is null)
+        {
+            return;
+        }
+
+        if (button!.DataContext is not WallpaperItem item)
+        {
+            target.Source = null;
+            return;
+        }
+
+        var path = item.FullPath;
+
+        // A cache hit paints in the same frame, so scrolling back over already
+        // decoded tiles does not flash empty.
+        if (ThumbnailCache.Instance.TryGetCached(path, out var cached))
+        {
+            target.Source = cached;
+            return;
+        }
+
+        target.Source = null;
+        var thumbnail = await ThumbnailCache.Instance.GetAsync(path);
+
+        if (button.DataContext is WallpaperItem current
+            && string.Equals(current.FullPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            target.Source = thumbnail;
+        }
+    }
+
+    private static async Task LoadHeroThumbnailAsync(Image image)
+    {
+        var path = image.Tag as string;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            image.Source = null;
+            return;
+        }
+
+        if (ThumbnailCache.Instance.TryGetCached(path, out var cached))
+        {
+            image.Source = cached;
+            return;
+        }
+
+        var thumbnail = await ThumbnailCache.Instance.GetAsync(path);
+
+        // The wallpaper may have cycled again while this decode ran.
+        if (string.Equals(image.Tag as string, path, StringComparison.OrdinalIgnoreCase))
+        {
+            image.Source = thumbnail;
+        }
+    }
+
+    private static Image? FindTileImage(Button? button) =>
+        button?.Content is Panel panel
+            ? panel.Children.OfType<Image>().FirstOrDefault(child => child.Name == "PART_Image")
+            : null;
+
     private static void UpdateTileVisuals(Button? button)
     {
         if (button?.DataContext is not WallpaperItem item || button.Content is not Panel layers)

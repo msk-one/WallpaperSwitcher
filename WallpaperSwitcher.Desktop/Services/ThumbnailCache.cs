@@ -1,5 +1,3 @@
-using System.Globalization;
-using Avalonia.Data.Converters;
 using Avalonia.Media.Imaging;
 
 namespace WallpaperSwitcher.Desktop.Services;
@@ -13,7 +11,7 @@ namespace WallpaperSwitcher.Desktop.Services;
 /// and nothing ever disposed them. With the list virtualized only a screenful is
 /// live at a time, so a small cap covers scrolling without the footprint.
 /// </remarks>
-public sealed class ThumbnailCache : IValueConverter, IDisposable
+public sealed class ThumbnailCache : IDisposable
 {
     public static ThumbnailCache Instance { get; } = new();
 
@@ -28,27 +26,51 @@ public sealed class ThumbnailCache : IValueConverter, IDisposable
     {
     }
 
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    /// <summary>
+    /// Returns an already-decoded thumbnail without touching the disk.
+    /// </summary>
+    public bool TryGetCached(string path, out Bitmap? thumbnail)
     {
-        if (value is not string path || string.IsNullOrWhiteSpace(path))
+        lock (_gate)
+        {
+            if (_cache.TryGetValue(path, out thumbnail))
+            {
+                Touch(path);
+                return true;
+            }
+        }
+
+        thumbnail = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Decodes off the UI thread, so opening the window does not stall while a
+    /// screenful of images is read from disk.
+    /// </summary>
+    /// <remarks>
+    /// Decoding used to happen synchronously inside the value converter. Every
+    /// realized tile therefore blocked the UI thread for as long as one JPEG took
+    /// to read and downscale, which is what made showing the window take seconds
+    /// on a folder of large images.
+    /// </remarks>
+    public async Task<Bitmap?> GetAsync(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
         {
             return null;
         }
 
-        lock (_gate)
+        if (TryGetCached(path, out var cached))
         {
-            if (_cache.TryGetValue(path, out var cached))
-            {
-                Touch(path);
-                return cached;
-            }
+            return cached;
         }
 
-        var thumbnail = LoadThumbnail(path);
+        var thumbnail = await Task.Run(() => LoadThumbnail(path)).ConfigureAwait(true);
 
         lock (_gate)
         {
-            // Another thread may have populated it while we decoded.
+            // Another decode may have populated it while this one ran.
             if (_cache.TryGetValue(path, out var existing))
             {
                 thumbnail?.Dispose();
@@ -61,11 +83,6 @@ public sealed class ThumbnailCache : IValueConverter, IDisposable
             EvictWhileOverCapacity();
             return thumbnail;
         }
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        return null;
     }
 
     public void Dispose()
@@ -112,8 +129,8 @@ public sealed class ThumbnailCache : IValueConverter, IDisposable
         }
         catch (Exception ex)
         {
-            // Deliberately broad. This runs inside an IValueConverter on the UI
-            // thread, so anything that escapes takes the whole app down, and Skia
+            // Deliberately broad. A decode failure must never propagate out of
+            // the background task and reach the unhandled-exception handler, and Skia
             // does not document which exception types it raises for a format it
             // cannot decode (HEIC/HEIF and TIFF are unsupported) or for a
             // truncated file. A missing preview is not worth a crash.

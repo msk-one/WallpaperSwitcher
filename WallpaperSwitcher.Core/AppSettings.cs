@@ -29,6 +29,12 @@ public sealed class AppSettings
     /// </summary>
     public bool StartMinimized { get; set; }
 
+    /// <summary>
+    /// What the window's close button does. <see cref="WindowCloseAction.Ask"/>
+    /// until the user answers the prompt with "remember this" ticked.
+    /// </summary>
+    public WindowCloseAction CloseAction { get; set; } = WindowCloseAction.Ask;
+
     public List<WallpaperAssignment> Assignments { get; set; } = [];
 }
 

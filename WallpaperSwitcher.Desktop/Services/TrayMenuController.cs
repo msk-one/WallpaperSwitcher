@@ -59,16 +59,32 @@ public sealed class TrayMenuController : IDisposable
         {
             TrayIcon.SetIcons(Application.Current, new TrayIcons { _trayIcon });
         }
+
+        // NativeMenu.NeedsUpdate does not fire on Windows, so the menu was only
+        // ever re-synced by its own items. Changing the shuffle cadence on the
+        // Settings page left the tray showing the previous radio selection.
+        _viewModel.PropertyChanged += OnViewModelPropertyChanged;
     }
 
     public void Dispose()
     {
+        _viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+
         if (Application.Current is not null)
         {
             TrayIcon.SetIcons(Application.Current, new TrayIcons());
         }
 
         _trayIcon.Dispose();
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(MainWindowViewModel.SelectedShuffleOption)
+            or nameof(MainWindowViewModel.StartAtLogin))
+        {
+            RunOnUiThread(RefreshCheckedItems);
+        }
     }
 
     private NativeMenu BuildMenu()

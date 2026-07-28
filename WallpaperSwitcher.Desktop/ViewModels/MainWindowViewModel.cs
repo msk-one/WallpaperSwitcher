@@ -30,6 +30,13 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         new(WallpaperFit.Span, "Span")
     ];
 
+    private readonly IReadOnlyList<WindowCloseActionOption> _closeActionOptions =
+    [
+        new(WindowCloseAction.Ask, "Ask every time"),
+        new(WindowCloseAction.MinimizeToTray, "Keep running in the tray"),
+        new(WindowCloseAction.Quit, "Quit the app")
+    ];
+
     /// <summary>
     /// Files that failed to apply during this run. The cycle key is deterministic,
     /// so without this the watchdog would recompute the same unusable image every
@@ -49,6 +56,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private int _selectedPageIndex;
     private bool _isLoadingSettings;
     private WallpaperFitOption _selectedFitOption;
+    private WindowCloseActionOption _selectedCloseActionOption;
     private string _statusMessage = "Choose a folder with wallpapers to get started.";
     private string? _lastAppliedPath;
     private string? _lastAppliedCycleKey;
@@ -69,6 +77,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
         _selectedShuffleOption = _shuffleOptions.First(option => option.Value == ShuffleCadence.Daily);
         _selectedFitOption = _fitOptions.First(option => option.Value == WallpaperFit.Fill);
+        _selectedCloseActionOption = _closeActionOptions.First(option => option.Value == WindowCloseAction.Ask);
         _startAtLogin = LaunchAtLoginService.IsEnabled();
         LoadSettings();
 
@@ -195,6 +204,38 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             ? "Starts in the tray."
             : "Opens the window on start.";
         Save();
+    }
+
+    public IReadOnlyList<WindowCloseActionOption> CloseActionOptions => _closeActionOptions;
+
+    /// <summary>
+    /// What the window's close button does. Read by MainWindow on close.
+    /// </summary>
+    public WindowCloseAction CloseAction => _selectedCloseActionOption.Value;
+
+    public WindowCloseActionOption SelectedCloseActionOption
+    {
+        get => _selectedCloseActionOption;
+        set => SetField(ref _selectedCloseActionOption, value);
+    }
+
+    /// <summary>
+    /// Records the answer to the close prompt, or a change made on the Settings
+    /// page. Persists without touching the wallpaper.
+    /// </summary>
+    public void SetCloseAction(WindowCloseAction action)
+    {
+        SelectedCloseActionOption = _closeActionOptions.FirstOrDefault(option => option.Value == action)
+            ?? _selectedCloseActionOption;
+
+        StatusMessage = action switch
+        {
+            WindowCloseAction.MinimizeToTray => "Closing the window will keep the app running.",
+            WindowCloseAction.Quit => "Closing the window will quit the app.",
+            _ => "Closing the window will ask what to do."
+        };
+
+        PersistSettings();
     }
 
     // ---- Shell state -------------------------------------------------------
@@ -538,6 +579,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         DayStart = settings.DayStartsAt;
         NightStart = settings.NightStartsAt;
         StartMinimized = settings.StartMinimized;
+        SelectedCloseActionOption = _closeActionOptions.FirstOrDefault(option => option.Value == settings.CloseAction)
+            ?? _closeActionOptions.First(option => option.Value == WindowCloseAction.Ask);
         SelectedShuffleOption = _shuffleOptions.FirstOrDefault(option => option.Value == settings.ShuffleCadence)
             ?? _shuffleOptions.First(option => option.Value == ShuffleCadence.Daily);
         SelectedFitOption = _fitOptions.FirstOrDefault(option => option.Value == settings.WallpaperFit)
@@ -898,6 +941,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         settings.ShuffleCadence = SelectedShuffleOption.Value;
         settings.WallpaperFit = SelectedFitOption.Value;
         settings.StartMinimized = StartMinimized;
+        settings.CloseAction = SelectedCloseActionOption.Value;
 
         // An empty image list must not block the save. The tray's cadence radios
         // and "Swap day/night hours" both call Save(), so refusing here made those

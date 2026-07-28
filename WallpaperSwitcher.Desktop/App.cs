@@ -122,13 +122,6 @@ public sealed class App : Application
             desktop.MainWindow = _mainWindow;
         }
 
-        // A window restored from the tray was coming up behind whatever had focus.
-        // Windows only lets the foreground process call SetForegroundWindow, and
-        // the click that opened the tray menu does not transfer that right, so
-        // Activate() alone is a no-op. Briefly marking the window topmost raises
-        // it without needing foreground rights; dropping the flag immediately
-        // afterwards leaves it at the top of the normal z-order rather than
-        // pinned above everything.
         if (_mainWindow.WindowState == WindowState.Minimized)
         {
             _mainWindow.WindowState = WindowState.Normal;
@@ -136,13 +129,18 @@ public sealed class App : Application
 
         _mainWindow.Show();
 
-        if (OperatingSystem.IsWindows() && !_mainWindow.Topmost)
-        {
-            _mainWindow.Topmost = true;
-            _mainWindow.Topmost = false;
-        }
+        // See ForegroundWindow: Activate() alone cannot take the foreground from
+        // another process, which is why a click on the tray icon left the window
+        // behind whatever had focus.
+        ForegroundWindow.Raise(_mainWindow);
+    }
 
-        _mainWindow.Activate();
+    /// <summary>
+    /// Quit chosen from the window's close prompt.
+    /// </summary>
+    public void QuitFromWindow()
+    {
+        QuitApplication();
     }
 
     private void QuitApplication()

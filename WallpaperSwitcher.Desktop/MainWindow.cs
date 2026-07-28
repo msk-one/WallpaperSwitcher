@@ -12,6 +12,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
+using Avalonia.VisualTree;
 using WallpaperSwitcher.Desktop.Services;
 using WallpaperSwitcher.Desktop.Theming;
 using WallpaperSwitcher.Desktop.ViewModels;
@@ -33,19 +34,22 @@ public sealed class MainWindow : Window
 
     public MainWindow()
     {
-        Title = "Wallpaper Switcher";
+        // Avalonia's drawn chrome renders Title into the 48px bar, and the same
+        // string is what the taskbar and alt-tab show, so this is the one place
+        // the version needs to be written.
+        Title = $"Wallpaper Switcher {MainWindowViewModel.AppVersion}";
 
         // The mockup calls for 900x620. That is the width at which the four-column
         // grid exactly reaches the pane's right padding, so the last column sits
         // flush against the edge and any scrollbar overlaps it. A little more room
         // keeps the design's proportions while leaving the grid a real gutter, and
         // the raised minimum stops the hero's buttons from being squeezed out.
-        // Height is set by the Settings page, which is the taller of the two: at
-        // 700 its last row ("Logs and settings file") sat half under the status
-        // bar, and because Fluent's scrollbars are overlays that only appear on
-        // hover, it read as clipped rather than scrollable.
+        // Height is set by the Settings page, which is the taller of the two and
+        // now carries a close-behaviour row as well. Sized so its last row is
+        // visible without scrolling at the default size; below that the pane
+        // scrolls, and the track is always drawn so that is discoverable.
         Width = 960;
-        Height = 760;
+        Height = 820;
         MinWidth = 780;
         MinHeight = 560;
         Icon = AppIcons.LoadAppIcon();
@@ -97,19 +101,67 @@ public sealed class MainWindow : Window
             await RestoreBookmarkedFolderAsync();
         };
 
-        Closing += (_, args) =>
-        {
-            // Only intercept the user clicking the close button. An application
-            // or OS shutdown must be allowed through, or the machine cannot log
-            // off while the app sits in the tray.
-            if (args.CloseReason != WindowCloseReason.WindowClosing)
-            {
-                return;
-            }
+        Closing += OnClosing;
+    }
 
-            args.Cancel = true;
-            Hide();
-        };
+    /// <summary>
+    /// Set while the close prompt's answer is being carried out, so re-raising
+    /// Close() does not re-enter the prompt.
+    /// </summary>
+    private bool _isClosingForReal;
+
+    private async void OnClosing(object? sender, WindowClosingEventArgs args)
+    {
+        // Only intercept the user clicking the close button. An application or OS
+        // shutdown must be allowed through, or the machine cannot log off while
+        // the app sits in the tray.
+        if (args.CloseReason != WindowCloseReason.WindowClosing || _isClosingForReal)
+        {
+            return;
+        }
+
+        switch (ViewModel.CloseAction)
+        {
+            case WindowCloseAction.MinimizeToTray:
+                args.Cancel = true;
+                Hide();
+                return;
+
+            case WindowCloseAction.Quit:
+                args.Cancel = true;
+                QuitFromClose();
+                return;
+        }
+
+        // Ask. The close has to be cancelled first because the dialog is awaited
+        // and Closing cannot be held open.
+        args.Cancel = true;
+
+        var choice = await Views.CloseActionDialog.AskAsync(this);
+        if (choice is not { } answer)
+        {
+            // Dismissed: treat as "do nothing", leaving the window open.
+            return;
+        }
+
+        if (answer.Remember)
+        {
+            ViewModel.SetCloseAction(answer.Action);
+        }
+
+        if (answer.Action == WindowCloseAction.Quit)
+        {
+            QuitFromClose();
+            return;
+        }
+
+        Hide();
+    }
+
+    private void QuitFromClose()
+    {
+        _isClosingForReal = true;
+        (Application.Current as App)?.QuitFromWindow();
     }
 
     private Control BuildShell()
@@ -205,9 +257,28 @@ public sealed class MainWindow : Window
             Child = new ScrollViewer
             {
                 HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-                Padding = new Thickness(20, 14, 24, 20),
-                Content = new ContentPresenter().Named(scope, "PART_SelectedContentHost")
+
+                // Always visible, not Auto. Fluent's scrollbars float over the
+                // content and only fade in on hover, which is what put the grid's
+                // last column underneath one and made the Settings page read as
+                // truncated rather than scrollable. Auto also makes the viewport
+                // width depend on the content height, so the pane re-measured
+                // mid-layout and rows ended up overflowing their card. Reserving
+                // the track unconditionally makes the width the pane measures
+                // against the width it actually gets.
+                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Visible,
+                AllowAutoHide = false,
+
+                // The pane inset is a margin on the content, not padding on the
+                // ScrollViewer. As padding it was not subtracted from the width
+                // handed to the content, so every card was laid out ~27px wider
+                // than the pane and the right-hand control in each settings row
+                // was clipped. As a margin it also scrolls with the content,
+                // which is what gives the last row breathing room at the bottom.
+                Content = new ContentPresenter
+                {
+                    Margin = new Thickness(20, 14, 24, 20)
+                }.Named(scope, "PART_SelectedContentHost")
             }
         }
             .Dyn(BackgroundProperty, "LayerFillColorDefaultBrush")
@@ -220,18 +291,28 @@ public sealed class MainWindow : Window
 
     private Control BuildStatusBar()
     {
+        // The divider is its own 1px strip rather than a top border on the bar.
+        // As a border it sat inside the bar's box, so the 34px was split 1 + 33
+        // and centred content landed half a pixel low; at 12px text that reads as
+        // "not quite centred". Splitting them makes the bar an exact 34px box
+        // whose centre is the text's centre.
+        var stack = new DockPanel { LastChildFill = true };
+
+        var divider = new Border { Height = 1 }
+            .Dyn(BackgroundProperty, "DividerStrokeColorDefaultBrush");
+        DockPanel.SetDock(divider, Dock.Top);
+        stack.Children.Add(divider);
+
         var bar = new Border
         {
             Height = StatusBarHeight,
-            BorderThickness = new Thickness(0, 1, 0, 0),
             Padding = new Thickness(24, 0)
         }
-            .Dyn(BackgroundProperty, "FooterFillColorBrush")
-            .Dyn(BorderBrushProperty, "DividerStrokeColorDefaultBrush");
+            .Dyn(BackgroundProperty, "FooterFillColorBrush");
 
         var layout = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            ColumnDefinitions = new ColumnDefinitions("Auto,*"),
             VerticalAlignment = VerticalAlignment.Center
         };
 
@@ -263,18 +344,11 @@ public sealed class MainWindow : Window
         Grid.SetColumn(status, 1);
         layout.Children.Add(status);
 
-        var version = new TextBlock
-        {
-            Text = $"v{MainWindowViewModel.AppVersion}",
-            FontSize = 12,
-            Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center
-        }.Dyn(ForegroundProperty, "TextFillColorSecondaryBrush");
-        Grid.SetColumn(version, 2);
-        layout.Children.Add(version);
-
+        // The version lives in the title bar now, so the status line owns the
+        // full width of the bar.
         bar.Child = layout;
-        return bar;
+        stack.Children.Add(bar);
+        return stack;
     }
 
     // ---- Folder picking ----------------------------------------------------

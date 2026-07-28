@@ -63,6 +63,8 @@ public static class Icons
 
     public static readonly Icon Check = new("M4.5,12.5 L9.5,17.5 L19.5,6.5", true);
 
+    public static readonly Icon Close = new("M5.5,5.5 L18.5,18.5 M18.5,5.5 L5.5,18.5", true);
+
     public static readonly Icon Image = new(
         "M3,5 H21 V19 H3 Z M6,16.2 L10,11.2 L13,14.7 L16,11.2 L21,16.8 " +
         "M16.6,8.6 A1.5,1.5 0 1,1 16.59,8.6", true);

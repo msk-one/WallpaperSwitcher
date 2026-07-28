@@ -294,11 +294,7 @@ public sealed class WallpapersPage : UserControl
                 // ratio the mockup specifies.
                 ItemsStretch = UniformGridLayoutItemsStretch.Uniform
             },
-            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildTile(), true),
-
-            // The pane's vertical scrollbar is an overlay, so without a gutter it
-            // sits on top of the last column.
-            Margin = new Thickness(0, 0, 12, 0)
+            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildTile(), true)
         };
         repeater.Bind(ItemsRepeater.ItemsSourceProperty, new Binding(nameof(MainWindowViewModel.WallpaperItems)));
 

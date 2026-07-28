@@ -275,12 +275,46 @@ public sealed class SettingsPage : UserControl
         rows.Children.Add(BuildToggleRow(
             Icons.Image,
             "Start in the tray",
-            "No window on startup. Closing the window always leaves the app running.",
+            "No window on startup.",
             nameof(MainWindowViewModel.StartMinimized),
             enabled => ViewModel.SetStartMinimized(enabled)));
 
+        rows.Children.Add(BuildCloseActionRow());
         rows.Children.Add(BuildLogRow());
         return rows;
+    }
+
+    private Control BuildCloseActionRow()
+    {
+        var card = Ui.Card(minHeight: 48, padding: new Thickness(14, 8));
+        var layout = BuildRowLayout(
+            Icons.Close,
+            "When I close the window",
+            "The prompt can also set this, and this row changes it back.");
+
+        var closeAction = new ComboBox
+        {
+            Width = 200,
+            Height = Ui.ControlHeight,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        AutomationProperties.SetName(closeAction, "When I close the window");
+        closeAction.Bind(ItemsControl.ItemsSourceProperty,
+            new Binding(nameof(MainWindowViewModel.CloseActionOptions)));
+        closeAction.Bind(SelectingItemsControl.SelectedItemProperty,
+            new Binding(nameof(MainWindowViewModel.SelectedCloseActionOption)) { Mode = BindingMode.TwoWay });
+        closeAction.SelectionChanged += (_, _) =>
+        {
+            if (closeAction.SelectedItem is WindowCloseActionOption option && DataContext is MainWindowViewModel vm)
+            {
+                vm.SetCloseAction(option.Value);
+            }
+        };
+
+        Grid.SetColumn(closeAction, 2);
+        layout.Children.Add(closeAction);
+        card.Child = layout;
+        return card;
     }
 
     private Control BuildFitRow()

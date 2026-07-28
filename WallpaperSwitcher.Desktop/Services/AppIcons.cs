@@ -18,4 +18,11 @@ public static class AppIcons
     {
         return new WindowIcon(AssetLoader.Open(new Uri("avares://WallpaperSwitcher/Assets/TrayIcon.png")));
     }
+
+    /// <summary>The app icon as a bitmap, for the inline title bar.</summary>
+    public static Avalonia.Media.Imaging.Bitmap LoadAppIconBitmap()
+    {
+        return new Avalonia.Media.Imaging.Bitmap(
+            AssetLoader.Open(new Uri("avares://WallpaperSwitcher/Assets/AppIcon.png")));
+    }
 }

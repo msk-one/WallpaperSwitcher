@@ -1,38 +1,65 @@
-using Avalonia;
+﻿using Avalonia;
+using Avalonia.Automation;
+using Avalonia.Automation.Peers;
 using Avalonia.Controls;
-using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Controls.Chrome;
+using Avalonia.Controls.Presenters;
 using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Shapes;
 using Avalonia.Controls.Templates;
-using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Layout;
 using Avalonia.Media;
-using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using WallpaperSwitcher.Desktop.Services;
+using WallpaperSwitcher.Desktop.Theming;
 using WallpaperSwitcher.Desktop.ViewModels;
+using WallpaperSwitcher.Desktop.Views;
+
+using PathShape = Avalonia.Controls.Shapes.Path;
 
 namespace WallpaperSwitcher.Desktop;
 
 public sealed class MainWindow : Window
 {
+    private const double TitleBarHeight = 48;
+    private const double NavPaneWidth = 200;
+    private const double StatusBarHeight = 34;
+
     private bool _hasRestoredBookmark;
-    private ThemePalette _palette;
 
     private MainWindowViewModel ViewModel => (MainWindowViewModel)DataContext!;
 
     public MainWindow()
     {
         Title = "Wallpaper Switcher";
-        Width = 1100;
-        Height = 720;
-        MinWidth = 940;
-        MinHeight = 560;
+        Width = 900;
+        Height = 620;
+        MinWidth = 720;
+        MinHeight = 520;
         Icon = AppIcons.LoadAppIcon();
-        _palette = ThemePalette.FromTheme(ActualThemeVariant);
-        Background = _palette.Brush(_palette.WindowBackground);
-        Content = BuildLayout();
+
+        this.Dyn(BackgroundProperty, "SolidBackgroundFillColorBaseBrush");
+
+        // The 48px bar with the inline app icon is a Windows convention. macOS
+        // owns the top-left for its traffic lights and Linux window managers vary
+        // too much to hand-roll chrome for, so those keep their native title bar
+        // and the content simply starts below it. Everything inside the window is
+        // identical on all three.
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows gets the design's 48px bar. Avalonia draws the icon, title
+            // and caption buttons into it, and the content is inset below by
+            // WindowDecorationMargin. Drawing our own title on top of that is
+            // what produced doubled text, so the decorations own the bar
+            // entirely. macOS and Linux keep their native chrome, where the
+            // margin is zero and this is a no-op.
+            ExtendClientAreaToDecorationsHint = true;
+            ExtendClientAreaTitleBarHeightHint = TitleBarHeight;
+        }
+
+        Content = BuildShell();
 
         Opened += async (_, _) =>
         {
@@ -61,435 +88,173 @@ public sealed class MainWindow : Window
             args.Cancel = true;
             Hide();
         };
-
-        ActualThemeVariantChanged += (_, _) =>
-        {
-            _palette = ThemePalette.FromTheme(ActualThemeVariant);
-            Background = _palette.Brush(_palette.WindowBackground);
-            Content = BuildLayout();
-        };
     }
 
-    private Control BuildLayout()
+    private Control BuildShell()
     {
-        var root = new Grid
-        {
-            Margin = new Thickness(16),
-            RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto")
-        };
+        var root = new DockPanel { LastChildFill = true };
 
-        root.Children.Add(BuildHeader());
-        root.Children.Add(BuildControls());
-        root.Children.Add(BuildWallpaperTable());
-        root.Children.Add(BuildStatusBar());
+        // Keeps the content clear of whatever the platform reserves for chrome.
+        root.Bind(MarginProperty, new Avalonia.Data.Binding(nameof(WindowDecorationMargin)) { Source = this });
 
+        var statusBar = BuildStatusBar();
+        DockPanel.SetDock(statusBar, Dock.Bottom);
+        root.Children.Add(statusBar);
+
+        root.Children.Add(BuildBody());
         return root;
     }
 
-    private Control BuildHeader()
+    private Control BuildBody()
     {
-        var panel = Card();
-        Grid.SetRow(panel, 0);
-        panel.Margin = new Thickness(0, 0, 0, 14);
-
         var grid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto")
+            ColumnDefinitions = new ColumnDefinitions($"{NavPaneWidth},*")
         };
 
-        var copy = new StackPanel();
-        copy.Children.Add(new TextBlock
+        var pages = new TabControl
         {
-            Text = "Wallpaper Switcher",
-            FontSize = 22,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = _palette.Brush(_palette.Text)
-        });
-        copy.Children.Add(new TextBlock
-        {
-            Text = "Point to one folder, mark each image as Day or Night, and let the app handle the rest.",
-            Margin = new Thickness(0, 6, 0, 0),
-            Foreground = _palette.Brush(_palette.MutedText),
-            TextWrapping = TextWrapping.Wrap
-        });
-
-        var applyNow = ActionButton("Apply now", () => ViewModel.ApplyNow(), primary: true);
-        Grid.SetColumn(applyNow, 1);
-
-        grid.Children.Add(copy);
-        grid.Children.Add(applyNow);
-        panel.Child = grid;
-        return panel;
-    }
-
-    private Control BuildControls()
-    {
-        var outer = new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,Auto"),
-            Margin = new Thickness(0, 0, 0, 14)
+            TabStripPlacement = Dock.Left,
+            Padding = new Thickness(0),
+            ItemContainerTheme = NavItemTheme.Create(),
+            Template = BuildNavTemplate()
         };
-        Grid.SetRow(outer, 1);
-
-        var folderCard = Card();
-
-        var folderGrid = new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,Auto,Auto"),
-            ColumnDefinitions = new ColumnDefinitions("*")
-        };
-
-        folderGrid.Children.Add(Label("Wallpaper folder"));
-
-        var folderRow = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,258"),
-            Margin = new Thickness(0, 8, 0, 0)
-        };
-
-        var folderText = new TextBox
-        {
-            MinHeight = 34,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            PlaceholderText = "Choose or paste a folder path",
-            Background = _palette.Brush(_palette.InputBackground),
-            Foreground = _palette.Brush(_palette.Text),
-            BorderBrush = _palette.Brush(_palette.InputBorder)
-        };
-        folderText.Bind(TextBox.TextProperty, TwoWay(nameof(MainWindowViewModel.WallpaperDirectory)));
-        folderRow.Children.Add(folderText);
-
-        var folderActions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8,
-            Margin = new Thickness(10, 0, 0, 0),
-            HorizontalAlignment = HorizontalAlignment.Right
-        };
-
-        var browse = ActionButton("Browse", async () => await BrowseFolderAsync());
-        folderActions.Children.Add(browse);
-
-        var refresh = ActionButton("Refresh", async () => await RefreshFolderAsync());
-        folderActions.Children.Add(refresh);
-
-        var save = ActionButton("Save", () => ViewModel.Save());
-        folderActions.Children.Add(save);
-        Grid.SetColumn(folderActions, 1);
-        folderRow.Children.Add(folderActions);
-
-        Grid.SetRow(folderRow, 1);
-        folderGrid.Children.Add(folderRow);
-
-        var supported = new TextBlock
-        {
-            Margin = new Thickness(0, 8, 0, 0),
-            Foreground = _palette.Brush(_palette.MutedText),
-            TextWrapping = TextWrapping.Wrap
-        };
-        supported.Bind(TextBlock.TextProperty, OneWay(nameof(MainWindowViewModel.SupportedFileSummary)));
-        Grid.SetRow(supported, 2);
-        folderGrid.Children.Add(supported);
-
-        folderCard.Child = folderGrid;
-        Grid.SetRow(folderCard, 0);
-        outer.Children.Add(folderCard);
-
-        var scheduleCard = Card();
-        scheduleCard.Margin = new Thickness(0, 10, 0, 0);
-
-        var schedulePanel = new WrapPanel
-        {
-            Orientation = Orientation.Horizontal
-        };
-
-        schedulePanel.Children.Add(FieldGroup("Day starts", TimeTextBox(nameof(MainWindowViewModel.DayStartText))));
-
-        var shuffle = new ComboBox
-        {
-            Width = 220,
-            MinHeight = 34,
-            Margin = new Thickness(10, 0, 0, 0),
-            Background = _palette.Brush(_palette.InputBackground),
-            Foreground = _palette.Brush(_palette.Text),
-            BorderBrush = _palette.Brush(_palette.InputBorder)
-        };
-        shuffle.Bind(ItemsControl.ItemsSourceProperty, OneWay(nameof(MainWindowViewModel.ShuffleOptions)));
-        shuffle.Bind(ComboBox.SelectedItemProperty, TwoWay(nameof(MainWindowViewModel.SelectedShuffleOption)));
-
-        schedulePanel.Children.Add(FieldGroup("Night starts", TimeTextBox(nameof(MainWindowViewModel.NightStartText))));
-        schedulePanel.Children.Add(FieldGroup("Shuffle", shuffle));
-
-        if (OperatingSystem.IsWindows())
-        {
-            // Only Windows honours the fit setting; macOS and Linux desktops
-            // decide how to scale the wallpaper themselves.
-            var fit = new ComboBox
+        pages.Bind(SelectingItemsControl.SelectedIndexProperty,
+            new Avalonia.Data.Binding(nameof(MainWindowViewModel.SelectedPageIndex))
             {
-                Width = 130,
-                MinHeight = 34,
-                Margin = new Thickness(10, 0, 0, 0),
-                Background = _palette.Brush(_palette.InputBackground),
-                Foreground = _palette.Brush(_palette.Text),
-                BorderBrush = _palette.Brush(_palette.InputBorder)
-            };
-            fit.Bind(ItemsControl.ItemsSourceProperty, OneWay(nameof(MainWindowViewModel.FitOptions)));
-            fit.Bind(ComboBox.SelectedItemProperty, TwoWay(nameof(MainWindowViewModel.SelectedFitOption)));
-            fit.SelectionChanged += (_, _) =>
-            {
-                if (fit.SelectedItem is WallpaperFitOption option)
-                {
-                    ViewModel.SetWallpaperFit(option.Value);
-                }
-            };
-            schedulePanel.Children.Add(FieldGroup("Fit", fit));
-        }
+                Mode = Avalonia.Data.BindingMode.TwoWay
+            });
 
-        var startAtLogin = new CheckBox
-        {
-            Content = "Start at login",
-            Margin = new Thickness(18, 4, 0, 4),
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(_palette.Text)
-        };
-        startAtLogin.Bind(ToggleButton.IsCheckedProperty, OneWay(nameof(MainWindowViewModel.StartAtLogin)));
-        startAtLogin.Click += (_, _) => ViewModel.SetStartAtLogin(startAtLogin.IsChecked == true);
-        schedulePanel.Children.Add(startAtLogin);
+        pages.Items.Add(NavItem("Wallpapers", Icons.Image, new WallpapersPage(this)));
+        pages.Items.Add(NavItem("Settings", Icons.Settings, new SettingsPage(this)));
 
-        var startMinimized = new CheckBox
-        {
-            Content = "Start minimized",
-            Margin = new Thickness(18, 4, 0, 4),
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(_palette.Text)
-        };
-        startMinimized.Bind(ToggleButton.IsCheckedProperty, OneWay(nameof(MainWindowViewModel.StartMinimized)));
-        startMinimized.Click += (_, _) => ViewModel.SetStartMinimized(startMinimized.IsChecked == true);
-        schedulePanel.Children.Add(startMinimized);
-
-        scheduleCard.Child = schedulePanel;
-        Grid.SetRow(scheduleCard, 1);
-        outer.Children.Add(scheduleCard);
-
-        return outer;
-    }
-
-    private Control BuildWallpaperTable()
-    {
-        var panel = Card();
-        panel.Padding = new Thickness(0);
-        Grid.SetRow(panel, 2);
-
-        var grid = new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,*")
-        };
-
-        var header = new Grid
-        {
-            Margin = new Thickness(16, 16, 16, 10),
-            ColumnDefinitions = new ColumnDefinitions("*")
-        };
-
-        var headerCopy = new StackPanel();
-        headerCopy.Children.Add(new TextBlock
-        {
-            Text = "Image assignments",
-            FontSize = 15,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = _palette.Brush(_palette.Text)
-        });
-        headerCopy.Children.Add(new TextBlock
-        {
-            Text = "Images with 'day' or 'night' in the file name are pre-tagged automatically. Everything else starts as Ignore.",
-            Margin = new Thickness(0, 4, 0, 0),
-            Foreground = _palette.Brush(_palette.MutedText),
-            TextWrapping = TextWrapping.Wrap
-        });
-        header.Children.Add(headerCopy);
-
-        var tableGrid = new Grid
-        {
-            RowDefinitions = new RowDefinitions("Auto,*"),
-            Margin = new Thickness(16, 0, 16, 16)
-        };
-
-        var tableHeader = BuildWallpaperHeaderRow();
-        tableGrid.Children.Add(tableHeader);
-
-        var wallpaperItems = new ItemsControl
-        {
-            ItemTemplate = new FuncDataTemplate<WallpaperItem>((_, _) => BuildWallpaperItemRow(), false),
-
-            // Without virtualization every row is materialized and every
-            // thumbnail decoded up front, and an OS light/dark switch rebuilds
-            // the whole tree (see ActualThemeVariantChanged), freezing the app
-            // for seconds on a folder with hundreds of images.
-            ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel())
-        };
-        wallpaperItems.Bind(ItemsControl.ItemsSourceProperty, OneWay(nameof(MainWindowViewModel.WallpaperItems)));
-
-        var wallpaperScroller = new ScrollViewer
-        {
-            Content = wallpaperItems
-        };
-
-        var wallpaperList = new Border
-        {
-            Child = wallpaperScroller,
-            BorderThickness = new Thickness(1),
-            BorderBrush = _palette.Brush(_palette.Border),
-            Background = _palette.Brush(_palette.InputBackground)
-        };
-        Grid.SetRow(wallpaperList, 1);
-        tableGrid.Children.Add(wallpaperList);
-
-        Grid.SetRow(tableGrid, 1);
-        grid.Children.Add(header);
-        grid.Children.Add(tableGrid);
-        panel.Child = grid;
-        return panel;
-    }
-
-    private Control BuildWallpaperHeaderRow()
-    {
-        var row = WallpaperRowGrid();
-        row.Background = _palette.Brush(_palette.HeaderBackground);
-        row.Children.Add(HeaderCell("Preview", 0));
-        row.Children.Add(HeaderCell("File", 1));
-        row.Children.Add(HeaderCell("Use As", 2));
-        row.Children.Add(HeaderCell("Path", 3));
-        return row;
-    }
-
-    private Control BuildWallpaperItemRow()
-    {
-        var row = WallpaperRowGrid();
-        row.MinHeight = 62;
-
-        var previewFrame = new Border
-        {
-            Width = 72,
-            Height = 46,
-            Margin = new Thickness(10, 8),
-            Background = _palette.Brush(_palette.HeaderBackground),
-            BorderBrush = _palette.Brush(_palette.Border),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            ClipToBounds = true
-        };
-        // Shown when the decoder returns nothing, so a format Skia cannot read
-        // (HEIC/HEIF, TIFF) reads as "no preview" rather than a blank row that
-        // looks like the app is broken.
-        var previewPlaceholder = new TextBlock
-        {
-            Text = "no preview",
-            FontSize = 10,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(_palette.MutedText)
-        };
-
-        var preview = new Image
-        {
-            Stretch = Stretch.UniformToFill
-        };
-        preview.Bind(Image.SourceProperty, new Binding(nameof(WallpaperItem.FullPath))
-        {
-            Mode = BindingMode.OneWay,
-            Converter = ThumbnailCache.Instance
-        });
-
-        var previewStack = new Panel();
-        previewStack.Children.Add(previewPlaceholder);
-        previewStack.Children.Add(preview);
-        previewFrame.Child = previewStack;
-        Grid.SetColumn(previewFrame, 0);
-        row.Children.Add(previewFrame);
-
-        var file = CellText();
-        file.Bind(TextBlock.TextProperty, OneWay(nameof(WallpaperItem.FileName)));
-        Grid.SetColumn(file, 1);
-        row.Children.Add(file);
-
-        var categoryButtons = CategoryButtonGroup();
-        Grid.SetColumn(categoryButtons, 2);
-        row.Children.Add(categoryButtons);
-
-        var path = CellText();
-        path.Bind(TextBlock.TextProperty, OneWay(nameof(WallpaperItem.FullPath)));
-        Grid.SetColumn(path, 3);
-        row.Children.Add(path);
-
-        return row;
-    }
-
-    private static Grid WallpaperRowGrid()
-    {
-        return new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("92,220,250,*")
-        };
-    }
-
-
-    private TextBlock HeaderCell(string text, int column)
-    {
-        var cell = new TextBlock
-        {
-            Text = text,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = _palette.Brush(_palette.Text),
-            Padding = new Thickness(10, 8),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-        Grid.SetColumn(cell, column);
-        return cell;
-    }
-
-    private TextBlock CellText()
-    {
-        return new TextBlock
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            Padding = new Thickness(10, 7),
-            Foreground = _palette.Brush(_palette.Text),
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-    }
-
-    private Control BuildStatusBar()
-    {
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("*,Auto"),
-            Margin = new Thickness(2, 12, 2, 0)
-        };
-        Grid.SetRow(grid, 3);
-
-        var status = new TextBlock
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(_palette.Text),
-            TextWrapping = TextWrapping.Wrap
-        };
-        status.Bind(TextBlock.TextProperty, OneWay(nameof(MainWindowViewModel.StatusMessage)));
-
-        var settings = new TextBlock
-        {
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(_palette.MutedText),
-            Margin = new Thickness(12, 0, 0, 0)
-        };
-        settings.Bind(TextBlock.TextProperty, OneWay(nameof(MainWindowViewModel.VersionAndSettingsPath)));
-        Grid.SetColumn(settings, 1);
-
-        grid.Children.Add(status);
-        grid.Children.Add(settings);
+        Grid.SetColumnSpan(pages, 2);
+        grid.Children.Add(pages);
         return grid;
     }
 
-    private async Task BrowseFolderAsync()
+    private static TabItem NavItem(string label, Icons.Icon icon, Control page)
+    {
+        var header = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("16,*"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var glyph = Icons.Create(icon, 16);
+        Grid.SetColumn(glyph, 0);
+        header.Children.Add(glyph);
+
+        var text = new TextBlock
+        {
+            Text = label,
+            FontSize = 14,
+            LineHeight = 20,
+            Margin = new Thickness(14, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        Grid.SetColumn(text, 1);
+        header.Children.Add(text);
+
+        var item = new TabItem { Header = header, Content = page };
+        AutomationProperties.SetName(item, label);
+        return item;
+    }
+
+    /// <summary>
+    /// Lays the tab strip out as a 200-wide rail with the content pane inset to
+    /// its right, so the rail reads as chrome and the pane as content.
+    /// </summary>
+    private static FuncControlTemplate BuildNavTemplate() => new((_, scope) =>
+    {
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions($"{NavPaneWidth},*") };
+
+        var strip = new ItemsPresenter
+        {
+            Margin = new Thickness(8, 4, 4, 12)
+        }.Named(scope, "PART_ItemsPresenter");
+        Grid.SetColumn(strip, 0);
+        grid.Children.Add(strip);
+
+        var pane = new Border
+        {
+            CornerRadius = new CornerRadius(8, 0, 0, 0),
+            BorderThickness = new Thickness(1, 1, 0, 0),
+            Child = new ScrollViewer
+            {
+                HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+                VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+                Padding = new Thickness(20, 14, 24, 20),
+                Content = new ContentPresenter().Named(scope, "PART_SelectedContentHost")
+            }
+        }
+            .Dyn(BackgroundProperty, "LayerFillColorDefaultBrush")
+            .Dyn(BorderBrushProperty, "DividerStrokeColorDefaultBrush");
+
+        Grid.SetColumn(pane, 1);
+        grid.Children.Add(pane);
+        return grid;
+    });
+
+    private Control BuildStatusBar()
+    {
+        var bar = new Border
+        {
+            Height = StatusBarHeight,
+            BorderThickness = new Thickness(0, 1, 0, 0),
+            Padding = new Thickness(24, 0)
+        }
+            .Dyn(BackgroundProperty, "FooterFillColorBrush")
+            .Dyn(BorderBrushProperty, "DividerStrokeColorDefaultBrush");
+
+        var layout = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto"),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+
+        var glyph = Icons.Create(Icons.Check, 12);
+        if (glyph is PathShape shape)
+        {
+            shape.Dyn(Shape.StrokeProperty, "TextFillColorSecondaryBrush");
+        }
+        glyph.Margin = new Thickness(0, 0, 12, 0);
+        Grid.SetColumn(glyph, 0);
+        layout.Children.Add(glyph);
+
+        var status = new TextBlock
+        {
+            FontSize = 12,
+            LineHeight = 16,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center
+        }.Dyn(ForegroundProperty, "TextFillColorSecondaryBrush");
+        status.Bind(TextBlock.TextProperty, new Avalonia.Data.Binding(nameof(MainWindowViewModel.StatusMessage)));
+
+        // Applying a wallpaper is announced without stealing focus.
+        AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        AutomationProperties.SetName(status, "Status");
+        Grid.SetColumn(status, 1);
+        layout.Children.Add(status);
+
+        var version = new TextBlock
+        {
+            Text = $"v{MainWindowViewModel.AppVersion}",
+            FontSize = 12,
+            LineHeight = 16,
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        }.Dyn(ForegroundProperty, "TextFillColorSecondaryBrush");
+        Grid.SetColumn(version, 2);
+        layout.Children.Add(version);
+
+        bar.Child = layout;
+        return bar;
+    }
+
+    // ---- Folder picking ----------------------------------------------------
+
+    internal async Task BrowseFolderAsync()
     {
         var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
         {
@@ -528,7 +293,7 @@ public sealed class MainWindow : Window
         ViewModel.SetWallpaperFolderFromStorage(folderPath, bookmark, loadResult);
     }
 
-    private async Task RefreshFolderAsync()
+    internal async Task RefreshFolderAsync()
     {
         if (!OperatingSystem.IsMacOS())
         {
@@ -565,7 +330,7 @@ public sealed class MainWindow : Window
         var folder = await TryOpenBookmarkAsync(ViewModel.WallpaperFolderBookmark);
         if (folder is null)
         {
-            ViewModel.StatusMessage = "Access to the saved wallpaper folder is no longer available. Choose it again with Browse.";
+            ViewModel.StatusMessage = "Access to the saved wallpaper folder is no longer available. Choose it again.";
             return;
         }
 
@@ -580,11 +345,7 @@ public sealed class MainWindow : Window
             folder,
             ViewModel.BuildAssignmentSnapshot());
 
-        ViewModel.SetWallpaperFolderFromStorage(
-            folderPath,
-            ViewModel.WallpaperFolderBookmark,
-            loadResult,
-            "Settings loaded.");
+        ViewModel.SetWallpaperFolderFromStorage(folderPath, ViewModel.WallpaperFolderBookmark, loadResult, "Settings loaded.");
     }
 
     private async Task<IStorageFolder?> TryOpenSelectedStorageFolderAsync()
@@ -609,7 +370,7 @@ public sealed class MainWindow : Window
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
-            ViewModel.StatusMessage = "Access to that folder was denied. Choose it again with Browse.";
+            ViewModel.StatusMessage = "Access to that folder was denied. Choose it again.";
             return null;
         }
     }
@@ -642,218 +403,6 @@ public sealed class MainWindow : Window
             return null;
         }
     }
-
-    private Border Card()
-    {
-        return new Border
-        {
-            Padding = new Thickness(16),
-            Background = _palette.Brush(_palette.CardBackground),
-            BorderBrush = _palette.Brush(_palette.Border),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8)
-        };
-    }
-
-    private TextBlock Label(string text)
-    {
-        return new TextBlock
-        {
-            Text = text,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(_palette.Text),
-            FontWeight = FontWeight.SemiBold
-        };
-    }
-
-    private TextBox TimeTextBox(string propertyName)
-    {
-        var textBox = new TextBox
-        {
-            Width = 112,
-            MinHeight = 34,
-            VerticalContentAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(10, 0, 14, 0),
-            Background = _palette.Brush(_palette.InputBackground),
-            Foreground = _palette.Brush(_palette.Text),
-            BorderBrush = _palette.Brush(_palette.InputBorder)
-        };
-        textBox.Bind(TextBox.TextProperty, TwoWay(propertyName));
-        return textBox;
-    }
-
-    private StackPanel FieldGroup(string labelText, Control field)
-    {
-        var group = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 4, 18, 4)
-        };
-
-        group.Children.Add(Label(labelText));
-        group.Children.Add(field);
-        return group;
-    }
-
-    private Control ActionButton(string text, Action action, bool primary = false)
-    {
-        var label = new TextBlock
-        {
-            Text = text,
-            FontWeight = FontWeight.SemiBold,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = _palette.Brush(primary ? _palette.AccentText : _palette.ButtonText)
-        };
-
-        var button = new Border
-        {
-            MinWidth = primary ? 104 : 72,
-            Height = primary ? 36 : 34,
-            Margin = primary ? new Thickness(16, 0, 0, 0) : default,
-            Padding = new Thickness(12, 4),
-            Background = _palette.Brush(primary ? _palette.Accent : _palette.ButtonBackground),
-            BorderBrush = _palette.Brush(primary ? _palette.Accent : _palette.InputBorder),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Cursor = new Cursor(StandardCursorType.Hand),
-            Child = label
-        };
-
-        var normalBackground = primary ? _palette.Accent : _palette.ButtonBackground;
-        var hoverBackground = primary ? _palette.AccentHover : _palette.ButtonHover;
-
-        button.PointerEntered += (_, _) => button.Background = _palette.Brush(hoverBackground);
-        button.PointerExited += (_, _) => button.Background = _palette.Brush(normalBackground);
-        button.PointerPressed += (_, _) => button.Background = _palette.Brush(primary ? _palette.AccentHover : _palette.ButtonPressed);
-        button.PointerReleased += (_, _) =>
-        {
-            button.Background = _palette.Brush(hoverBackground);
-            action();
-        };
-
-        return button;
-    }
-
-    private Control CategoryButtonGroup()
-    {
-        var panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 6,
-            Margin = new Thickness(8, 10),
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var buttons = new Dictionary<WallpaperCategory, Border>();
-        WallpaperItem? currentItem = null;
-
-        void Refresh()
-        {
-            foreach (var (category, button) in buttons)
-            {
-                var text = (TextBlock)button.Child!;
-                var isActive = currentItem?.Category == category;
-                button.Background = _palette.Brush(isActive ? _palette.ActiveButtonBackground : _palette.ButtonBackground);
-                button.BorderBrush = _palette.Brush(isActive ? _palette.ActiveButtonBackground : _palette.InputBorder);
-                text.Foreground = _palette.Brush(isActive ? _palette.ActiveButtonText : _palette.ButtonText);
-            }
-        }
-
-        void Attach(WallpaperItem? item)
-        {
-            if (currentItem is not null)
-            {
-                currentItem.PropertyChanged -= OnWallpaperItemPropertyChanged;
-            }
-
-            currentItem = item;
-
-            if (currentItem is not null)
-            {
-                currentItem.PropertyChanged += OnWallpaperItemPropertyChanged;
-            }
-
-            Refresh();
-        }
-
-        void OnWallpaperItemPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
-        {
-            if (args.PropertyName == nameof(WallpaperItem.Category))
-            {
-                Refresh();
-            }
-        }
-
-        foreach (var category in Enum.GetValues<WallpaperCategory>())
-        {
-            var label = new TextBlock
-            {
-                Text = category.ToString(),
-                FontWeight = FontWeight.SemiBold,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-
-            var button = new Border
-            {
-                MinWidth = 68,
-                Height = 32,
-                Padding = new Thickness(10, 4),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(4),
-                Cursor = new Cursor(StandardCursorType.Hand),
-                Child = label
-            };
-
-            button.PointerEntered += (_, _) =>
-            {
-                if (currentItem?.Category != category)
-                {
-                    button.Background = _palette.Brush(_palette.ButtonHover);
-                }
-            };
-            button.PointerExited += (_, _) => Refresh();
-            button.PointerPressed += (_, _) =>
-            {
-                button.Background = _palette.Brush(_palette.ButtonPressed);
-            };
-            button.PointerReleased += (_, _) =>
-            {
-                if (currentItem is not null)
-                {
-                    currentItem.Category = category;
-                }
-
-                Refresh();
-            };
-
-            buttons[category] = button;
-            panel.Children.Add(button);
-        }
-
-        panel.DataContextChanged += (_, _) => Attach(panel.DataContext as WallpaperItem);
-        panel.DetachedFromVisualTree += (_, _) => Attach(null);
-        Refresh();
-
-        return panel;
-    }
-
-    private static Binding OneWay(string path)
-    {
-        return new Binding(path)
-        {
-            Mode = BindingMode.OneWay
-        };
-    }
-
-    private static Binding TwoWay(string path)
-    {
-        return new Binding(path)
-        {
-            Mode = BindingMode.TwoWay
-        };
-    }
-
 }
+
+

@@ -4,6 +4,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Styling;
 using WallpaperSwitcher.Desktop.Services;
+using WallpaperSwitcher.Desktop.Theming;
 using WallpaperSwitcher.Desktop.ViewModels;
 
 namespace WallpaperSwitcher.Desktop;
@@ -23,11 +24,18 @@ public sealed class App : Application
     public override void Initialize()
     {
         Name = "Wallpaper Switcher";
+
+        // Default means "follow the OS". Every colour in the window resolves
+        // through a theme resource, so light and dark switch on their own and
+        // there is no palette to rebuild by hand.
         RequestedThemeVariant = ThemeVariant.Default;
+
         Styles.Add(new StyleInclude(new Uri("avares://WallpaperSwitcher"))
         {
             Source = new Uri("avares://Avalonia.Themes.Fluent/FluentTheme.xaml")
         });
+
+        Resources.MergedDictionaries.Add(FluentTokens.Create());
     }
 
     public override void OnFrameworkInitializationCompleted()

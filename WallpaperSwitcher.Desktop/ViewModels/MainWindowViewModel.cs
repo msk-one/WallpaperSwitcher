@@ -38,9 +38,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private readonly HashSet<string> _failedWallpapers = new(StringComparer.OrdinalIgnoreCase);
 
     private string _wallpaperDirectory = string.Empty;
-    private string _dayStartText = "06:00";
-    private string _nightStartText = "18:00";
+    private TimeSpan _dayStart = TimeSpan.FromHours(6);
+    private TimeSpan _nightStart = TimeSpan.FromHours(18);
     private ShuffleOption _selectedShuffleOption;
+    private HeroState _heroState = HeroState.NoFolder;
+    private string _heroTitle = string.Empty;
+    private string _heroSubtitle = string.Empty;
+    private string? _heroThumbnailPath;
+    private bool _highlightSource;
+    private int _selectedPageIndex;
+    private bool _isLoadingSettings;
     private WallpaperFitOption _selectedFitOption;
     private string _statusMessage = "Choose a folder with wallpapers to get started.";
     private string? _lastAppliedPath;
@@ -81,16 +88,33 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         set => SetField(ref _wallpaperDirectory, value);
     }
 
-    public string DayStartText
+    /// <summary>
+    /// Bound to the schedule bar. The bar snaps to 15 minutes and enforces an
+    /// hour between the two, so the old "must look like 06:00" and "cannot be the
+    /// same time" errors are no longer reachable and have been removed.
+    /// </summary>
+    public TimeSpan DayStart
     {
-        get => _dayStartText;
-        set => SetField(ref _dayStartText, value);
+        get => _dayStart;
+        set
+        {
+            if (SetField(ref _dayStart, value))
+            {
+                OnScheduleEdited();
+            }
+        }
     }
 
-    public string NightStartText
+    public TimeSpan NightStart
     {
-        get => _nightStartText;
-        set => SetField(ref _nightStartText, value);
+        get => _nightStart;
+        set
+        {
+            if (SetField(ref _nightStart, value))
+            {
+                OnScheduleEdited();
+            }
+        }
     }
 
     public ShuffleOption SelectedShuffleOption
@@ -166,10 +190,163 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     {
         StartMinimized = enabled;
         StatusMessage = enabled
-            ? "Wallpaper Switcher will start in the tray without opening a window."
-            : "Wallpaper Switcher will open its window on start.";
+            ? "Starts in the tray."
+            : "Opens the window on start.";
         Save();
     }
+
+    // ---- Shell state -------------------------------------------------------
+
+    /// <summary>Which of the two pages the nav is on. 0 = Wallpapers, 1 = Settings.</summary>
+    public int SelectedPageIndex
+    {
+        get => _selectedPageIndex;
+        set => SetField(ref _selectedPageIndex, value);
+    }
+
+    /// <summary>
+    /// Set for a moment after the hero or the empty state sends the user to
+    /// Settings, so the Source card is ringed and the jump is legible without a
+    /// dialog.
+    /// </summary>
+    public bool HighlightSource
+    {
+        get => _highlightSource;
+        private set => SetField(ref _highlightSource, value);
+    }
+
+    public HeroState HeroState
+    {
+        get => _heroState;
+        private set => SetField(ref _heroState, value);
+    }
+
+    public string HeroTitle
+    {
+        get => _heroTitle;
+        private set => SetField(ref _heroTitle, value);
+    }
+
+    public string HeroSubtitle
+    {
+        get => _heroSubtitle;
+        private set => SetField(ref _heroSubtitle, value);
+    }
+
+    public string? HeroThumbnailPath
+    {
+        get => _heroThumbnailPath;
+        private set => SetField(ref _heroThumbnailPath, value);
+    }
+
+    public int DayCount => WallpaperItems.Count(item => item.Category == WallpaperCategory.Day);
+
+    public int NightCount => WallpaperItems.Count(item => item.Category == WallpaperCategory.Night);
+
+    public int IgnoredCount => WallpaperItems.Count(item => item.Category == WallpaperCategory.Ignore);
+
+    public bool HasImages => WallpaperItems.Count > 0;
+
+    public string CountsSummary => HasImages
+        ? $"{DayCount} day · {NightCount} night · {IgnoredCount} ignored"
+        : "none yet";
+
+    public string FolderSummary
+    {
+        get
+        {
+            if (!HasFolder)
+            {
+                return "Subfolders are scanned. jpg, png, bmp, gif, tif.";
+            }
+
+            var folders = CountScannedSubfolders();
+            var subfolders = folders == 1 ? "1 subfolder" : $"{folders} subfolders";
+            return $"{WallpaperItems.Count} images · {subfolders} scanned · jpg, png, bmp, gif, tif";
+        }
+    }
+
+    public bool HasFolder => !string.IsNullOrWhiteSpace(WallpaperDirectory);
+
+    public string FolderDisplayPath => HasFolder ? WallpaperDirectory : "No folder selected";
+
+    /// <summary>Sends the user to Settings and rings the Source card.</summary>
+    public void NavigateToSource()
+    {
+        SelectedPageIndex = 1;
+        HighlightSource = true;
+    }
+
+    public void ClearSourceHighlight()
+    {
+        HighlightSource = false;
+    }
+
+    /// <summary>
+    /// Advances one image between Ignore, Day and Night. Bound to the tile
+    /// button's command, so it is reachable by keyboard and screen reader.
+    /// </summary>
+    public void CycleCategory(WallpaperItem item)
+    {
+        item.Category = item.Category switch
+        {
+            WallpaperCategory.Ignore => WallpaperCategory.Day,
+            WallpaperCategory.Day => WallpaperCategory.Night,
+            _ => WallpaperCategory.Ignore
+        };
+
+        RaiseCountsChanged();
+        StatusMessage = $"{item.FileName} is now {Describe(item.Category)}.";
+        Save();
+    }
+
+    private static string Describe(WallpaperCategory category) => category switch
+    {
+        WallpaperCategory.Day => "a day wallpaper",
+        WallpaperCategory.Night => "a night wallpaper",
+        _ => "ignored"
+    };
+
+    private void OnScheduleEdited()
+    {
+        if (_isLoadingSettings)
+        {
+            return;
+        }
+
+        StatusMessage = $"Day starts {Format(DayStart)}, night starts {Format(NightStart)}.";
+        Save();
+    }
+
+    private void RaiseCountsChanged()
+    {
+        OnPropertyChanged(nameof(DayCount));
+        OnPropertyChanged(nameof(NightCount));
+        OnPropertyChanged(nameof(IgnoredCount));
+        OnPropertyChanged(nameof(CountsSummary));
+        OnPropertyChanged(nameof(HasImages));
+        OnPropertyChanged(nameof(FolderSummary));
+        OnPropertyChanged(nameof(HasFolder));
+        OnPropertyChanged(nameof(FolderDisplayPath));
+    }
+
+    private int CountScannedSubfolders()
+    {
+        var root = WallpaperDirectory.Trim();
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            return 0;
+        }
+
+        return WallpaperItems
+            .Select(item => Path.GetDirectoryName(item.FullPath))
+            .Where(directory => !string.IsNullOrEmpty(directory)
+                && !string.Equals(directory, root, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+    }
+
+    private static string Format(TimeSpan value) => $"{(int)value.TotalHours:00}:{value.Minutes:00}";
 
     public void Start()
     {
@@ -249,17 +426,20 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     public void SwapDayNightHours()
     {
-        (DayStartText, NightStartText) = (NightStartText, DayStartText);
-        StatusMessage = $"Day now starts at {DayStartText}; night starts at {NightStartText}.";
-        ApplyWallpaperAndReschedule(forceApply: true);
+        _isLoadingSettings = true;
+        (DayStart, NightStart) = (NightStart, DayStart);
+        _isLoadingSettings = false;
+
+        StatusMessage = $"Day starts {Format(DayStart)}, night starts {Format(NightStart)}.";
+        Save();
     }
 
     public void SetShuffleCadence(ShuffleCadence cadence)
     {
         SelectedShuffleOption = _shuffleOptions.FirstOrDefault(option => option.Value == cadence)
             ?? _selectedShuffleOption;
-        StatusMessage = $"Wallpaper rotation set to {SelectedShuffleOption.Label.ToLowerInvariant()}.";
-        ApplyWallpaperAndReschedule(forceApply: true);
+        StatusMessage = $"Shuffles {SelectedShuffleOption.Label.ToLowerInvariant()}.";
+        Save();
     }
 
     public void SetStartAtLogin(bool enabled)
@@ -272,16 +452,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
 
         StartAtLogin = enabled;
-        StatusMessage = enabled
-            ? "Wallpaper Switcher will start when you sign in."
-            : "Wallpaper Switcher will no longer start when you sign in.";
+        StatusMessage = enabled ? "Starts when you sign in." : "No longer starts when you sign in.";
     }
 
     public void SetWallpaperFit(WallpaperFit fit)
     {
         SelectedFitOption = _fitOptions.FirstOrDefault(option => option.Value == fit) ?? _selectedFitOption;
-        StatusMessage = $"Wallpaper fit set to {SelectedFitOption.Label.ToLowerInvariant()}.";
-        ApplyWallpaperAndReschedule(forceApply: true);
+        StatusMessage = $"Fit set to {SelectedFitOption.Label.ToLowerInvariant()}.";
+        Save();
     }
 
     public void Dispose()
@@ -292,12 +470,16 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
 
     private void LoadSettings()
     {
+        // Suppress the autosave that every schedule edit would otherwise trigger
+        // while we are populating from disk.
+        _isLoadingSettings = true;
+
         var settings = _settingsStore.Load(out var loadStatus);
 
         WallpaperDirectory = settings.WallpaperDirectory;
         _wallpaperFolderBookmark = settings.WallpaperFolderBookmark;
-        DayStartText = FormatTime(settings.DayStartsAt);
-        NightStartText = FormatTime(settings.NightStartsAt);
+        DayStart = settings.DayStartsAt;
+        NightStart = settings.NightStartsAt;
         StartMinimized = settings.StartMinimized;
         SelectedShuffleOption = _shuffleOptions.FirstOrDefault(option => option.Value == settings.ShuffleCadence)
             ?? _shuffleOptions.First(option => option.Value == ShuffleCadence.Daily);
@@ -325,6 +507,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 AppLog.Warn("Settings file exists but could not be read.");
                 break;
         }
+
+        _isLoadingSettings = false;
+        RaiseCountsChanged();
     }
 
     private void SyncWallpaperListIfFolderChanged()
@@ -385,9 +570,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             WallpaperItems.Add(wallpaper);
         }
 
-        var dayCount = WallpaperItems.Count(item => item.Category == WallpaperCategory.Day);
-        var nightCount = WallpaperItems.Count(item => item.Category == WallpaperCategory.Night);
-        var summary = $"{WallpaperItems.Count} image(s) loaded. Day: {dayCount}, Night: {nightCount}.";
+        RaiseCountsChanged();
+
+        var summary = $"{WallpaperItems.Count} images loaded · {DayCount} day · {NightCount} night.";
         if (!string.IsNullOrWhiteSpace(statusPrefix))
         {
             summary = $"{statusPrefix} {summary}";
@@ -467,6 +652,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
                 _lastAppliedPath = candidate;
                 _lastAppliedCycleKey = cycleKey;
                 StatusMessage = $"{targetCategory} wallpaper active: {Path.GetFileName(candidate)}";
+                UpdateHero(now, targetCategory, candidate, dayStart, nightStart);
                 return;
             }
 
@@ -503,46 +689,71 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private bool TryValidateRuntimeConfiguration(out DateTime now, out TimeSpan dayStart, out TimeSpan nightStart)
     {
         now = DateTime.Now;
-
-        if (!TryParseSchedule(out dayStart, out nightStart))
-        {
-            return false;
-        }
+        dayStart = DayStart;
+        nightStart = NightStart;
 
         if (string.IsNullOrWhiteSpace(WallpaperDirectory))
         {
-            StatusMessage = "Choose a folder with wallpapers to get started.";
+            SetHero(HeroState.NoFolder, string.Empty, string.Empty);
+            StatusMessage = "Waiting for a folder.";
             return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(WallpaperDirectory) && !Directory.Exists(WallpaperDirectory))
+        if (!Directory.Exists(WallpaperDirectory))
         {
-            StatusMessage = "Choose an existing wallpaper folder before running the schedule.";
+            SetHero(
+                HeroState.FolderMissing,
+                "Wallpaper unchanged",
+                $"{WallpaperDirectory} is unavailable. Choose a folder again in Settings.");
+            StatusMessage = "Wallpaper unchanged — the source folder is missing.";
             return false;
         }
 
         return true;
     }
 
+    /// <summary>
+    /// Fills the hero strip from the wallpaper that was just applied.
+    /// </summary>
+    private void UpdateHero(DateTime now, WallpaperCategory category, string appliedPath, TimeSpan dayStart, TimeSpan nightStart)
+    {
+        var isNight = category == WallpaperCategory.Night;
+        var nextChange = isNight ? dayStart : nightStart;
+        var inSet = isNight ? NightCount : DayCount;
+
+        HeroThumbnailPath = appliedPath;
+        SetHero(
+            HeroState.Running,
+            Path.GetFileName(appliedPath),
+            $"{(isNight ? "Night" : "Day")} set · {inSet} images · next change {Format(nextChange)}");
+    }
+
+    private void SetHero(HeroState state, string title, string subtitle)
+    {
+        HeroState = state;
+        HeroTitle = title;
+        HeroSubtitle = subtitle;
+
+        if (state != HeroState.Running)
+        {
+            HeroThumbnailPath = null;
+        }
+    }
+
     private bool TryBuildSettings(out AppSettings settings)
     {
         settings = new AppSettings();
 
-        if (!TryParseSchedule(out var dayStart, out var nightStart))
-        {
-            return false;
-        }
-
         if (!string.IsNullOrWhiteSpace(WallpaperDirectory) && !Directory.Exists(WallpaperDirectory))
         {
-            StatusMessage = "Choose an existing wallpaper folder before saving.";
+            StatusMessage = "That folder is no longer available.";
             return false;
         }
 
         settings.WallpaperDirectory = WallpaperDirectory.Trim();
         settings.WallpaperFolderBookmark = _wallpaperFolderBookmark;
-        settings.DayStartsAt = dayStart;
-        settings.NightStartsAt = nightStart;
+        settings.DayStartsAt = DayStart;
+        settings.NightStartsAt = NightStart;
         settings.ShuffleCadence = SelectedShuffleOption.Value;
         settings.WallpaperFit = SelectedFitOption.Value;
         settings.StartMinimized = StartMinimized;
@@ -570,56 +781,6 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    private bool TryParseSchedule(out TimeSpan dayStart, out TimeSpan nightStart)
-    {
-        dayStart = default;
-        nightStart = default;
-
-        if (!TryParseTime(DayStartText, out dayStart))
-        {
-            StatusMessage = "Day start must look like 06:00 or 6:00 AM.";
-            return false;
-        }
-
-        if (!TryParseTime(NightStartText, out nightStart))
-        {
-            StatusMessage = "Night start must look like 18:00 or 6:00 PM.";
-            return false;
-        }
-
-        if (dayStart == nightStart)
-        {
-            StatusMessage = "Day start and night start cannot be the same time.";
-            return false;
-        }
-
-        return true;
-    }
-
-    private static bool TryParseTime(string input, out TimeSpan value)
-    {
-        value = default;
-        var trimmed = input.Trim();
-
-        if (TimeSpan.TryParse(trimmed, CultureInfo.InvariantCulture, out value)
-            || TimeSpan.TryParse(trimmed, CultureInfo.CurrentCulture, out value))
-        {
-            return value >= TimeSpan.Zero && value < TimeSpan.FromDays(1);
-        }
-
-        if (DateTime.TryParse(trimmed, CultureInfo.CurrentCulture, DateTimeStyles.NoCurrentDateDefault, out var dateTime))
-        {
-            value = dateTime.TimeOfDay;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static string FormatTime(TimeSpan value)
-    {
-        return value.ToString(@"hh\:mm", CultureInfo.InvariantCulture);
-    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {

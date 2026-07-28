@@ -78,6 +78,42 @@ choices silently reverted to filename guesses.
 Absolute paths are still read, so settings files written by earlier versions keep
 working, and images outside the folder stay absolute so they remain meaningful.
 
+## Theming and icons
+
+Every colour resolves through a theme resource, so light and dark follow the OS
+with no code involved. `ThemePalette` and the `ActualThemeVariantChanged` handler
+that rebuilt the entire visual tree on a theme switch are both gone.
+
+The design is specified against WinUI's semantic tokens
+(`CardBackgroundFillColorDefault`, `TextFillColorSecondary`, and so on).
+Avalonia's Fluent theme does not define those — it ships per-control keys instead,
+verified by enumerating every key the theme exposes in both 11.3 and 12.0. The
+names come from WinUI, which FluentAvalonia repackages, but FluentAvalonia is
+net10.0-only at 3.x and Avalonia-11-only at the net9.0-compatible 2.4.1. So
+`Theming/FluentTokens.cs` defines that layer directly, using WinUI's published
+values, as a theme dictionary keyed by variant.
+
+Icons are vector geometry in `Theming/Icons.cs`, not Segoe Fluent Icons glyphs.
+That font ships only with Windows, so the glyphs the mockup uses would render as
+empty boxes on macOS and Linux.
+
+## Accessibility
+
+Nothing interactive is a `Border` with pointer handlers. Tiles, the schedule
+handles, and every button are real controls, so they take focus, activate on
+Space and Enter, and keep the Fluent focus adorner.
+
+Verified through the UI Automation tree on Windows: the nav exposes two
+`TabItem`s, each tile is a keyboard-focusable `Button` named
+"beach-day.jpg, currently day. Activate to change.", and the schedule handles are
+`Thumb`s named "Day starts" and "Night starts" carrying their value as help text.
+The status line is a polite live region. Colour is never the only signal — each
+tile badge carries the word Day, Night or Ignore.
+
+The schedule bar has to be fully keyboard operable because it replaced the time
+text boxes and there is no typed entry left: arrows move 15 minutes, Page keys an
+hour, and Home/End run to the limit the 60-minute minimum gap allows.
+
 ## Platform adapters
 
 | | |
@@ -99,7 +135,8 @@ filesystem scan, which is an order of magnitude faster.
   but still shows a Gatekeeper warning.
 - **Windows only for the fit setting.** macOS and Linux desktops manage scaling
   themselves.
-- **Accessibility gaps.** The action buttons and the Day/Night/Ignore selector are
-  `Border` controls with pointer handlers, so they have no keyboard focus, no tab
-  order, and no screen-reader semantics. The checkboxes and dropdowns are real
-  controls and work correctly. Fixing the rest is planned.
+- **Ignored tiles are dimmed but not desaturated.** The design asks for grayscale
+  plus 50% opacity on the image layer. Avalonia ships blur and drop-shadow
+  effects but no colour-matrix, so there is no way to desaturate a bitmap without
+  a custom shader or re-decoding every thumbnail. Opacity is applied; the badge
+  carries the word "Ignore" either way, so nothing depends on the difference.

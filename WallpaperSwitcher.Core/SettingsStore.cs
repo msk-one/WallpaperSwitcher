@@ -157,6 +157,7 @@ public sealed class SettingsStore
             ShuffleCadence = settings.ShuffleCadence,
             WallpaperFit = settings.WallpaperFit,
             StartMinimized = settings.StartMinimized,
+            CloseAction = settings.CloseAction,
             Assignments = settings.Assignments
                 .Where(assignment => assignment.Category != WallpaperCategory.Ignore)
                 .Select(assignment => new WallpaperAssignment

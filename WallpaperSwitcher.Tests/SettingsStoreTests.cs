@@ -28,17 +28,26 @@ public sealed class SettingsStoreTests
         using var folder = new TempFolder();
         var store = CreateStoreIn(folder.Path);
 
+        // Non-ASCII in both the folder and the filename. One image inside the
+        // wallpaper folder, which is stored relative, and one outside it, which
+        // stays absolute.
+        var wallpapers = TestPaths.Rooted("Wallpapers", "Zdjęcia");
+        var inside = Path.Combine(wallpapers, "nocą.jpg");
+        var outside = Path.Combine(TestPaths.Rooted("Inne"), "dzień.jpg");
+
         var saved = new AppSettings
         {
-            WallpaperDirectory = @"C:\Wallpapers\Zdjęcia",
+            WallpaperDirectory = wallpapers,
             DayStartsAt = TimeSpan.FromHours(7),
             NightStartsAt = TimeSpan.FromHours(21),
             ShuffleCadence = ShuffleCadence.SixHours,
             WallpaperFit = WallpaperFit.Span,
             StartMinimized = true,
+            CloseAction = WindowCloseAction.Quit,
             Assignments =
             [
-                new WallpaperAssignment { Path = @"C:\Wallpapers\nocą.jpg", Category = WallpaperCategory.Night }
+                new WallpaperAssignment { Path = inside, Category = WallpaperCategory.Night },
+                new WallpaperAssignment { Path = outside, Category = WallpaperCategory.Day }
             ]
         };
 
@@ -53,9 +62,13 @@ public sealed class SettingsStoreTests
         Assert.AreEqual(ShuffleCadence.SixHours, loaded.ShuffleCadence);
         Assert.AreEqual(WallpaperFit.Span, loaded.WallpaperFit);
         Assert.IsTrue(loaded.StartMinimized);
-        Assert.AreEqual(1, loaded.Assignments.Count);
-        Assert.AreEqual(@"C:\Wallpapers\nocą.jpg", loaded.Assignments[0].Path);
+        Assert.AreEqual(WindowCloseAction.Quit, loaded.CloseAction, "the answer to the close prompt must survive a restart");
+
+        Assert.AreEqual(2, loaded.Assignments.Count);
+        Assert.AreEqual("nocą.jpg", loaded.Assignments[0].Path, "an image inside the folder is stored relative");
         Assert.AreEqual(WallpaperCategory.Night, loaded.Assignments[0].Category);
+        Assert.AreEqual(outside, loaded.Assignments[1].Path, "an image outside the folder stays absolute");
+        Assert.AreEqual(WallpaperCategory.Day, loaded.Assignments[1].Category);
     }
 
     [TestMethod]

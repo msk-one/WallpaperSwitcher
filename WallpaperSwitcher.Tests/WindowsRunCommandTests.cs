@@ -3,6 +3,28 @@ namespace WallpaperSwitcher.Tests;
 [TestClass]
 public sealed class WindowsRunCommandTests
 {
+    /// <summary>
+    /// Skips a test that cannot mean anything off Windows.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="WindowsRunCommand.ParseExecutablePath"/> finishes by calling
+    /// <see cref="Path.GetFullPath"/> to normalise the value read back from the
+    /// registry. That is Windows path semantics: on Linux and macOS a backslash
+    /// is an ordinary character, so <c>C:\Apps\x.exe</c> is a relative filename
+    /// and GetFullPath prepends the working directory to it. Formatting is plain
+    /// string work and stays covered everywhere.
+    /// </remarks>
+    private static bool RequireWindows()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return true;
+        }
+
+        Assert.Inconclusive("WindowsRunCommand parses Windows paths; only the formatting half is portable.");
+        return false;
+    }
+
     [TestMethod]
     public void FormatQuotesThePathWithoutEscapingBackslashes()
     {
@@ -28,6 +50,11 @@ public sealed class WindowsRunCommandTests
     [TestMethod]
     public void FormatThenParseRoundTripsToTheOriginalPath()
     {
+        if (!RequireWindows())
+        {
+            return;
+        }
+
         var original = @"C:\Users\MichałSzklarski\AppData\Local\Programs\WallpaperSwitcher\WallpaperSwitcher.exe";
 
         var parsed = WindowsRunCommand.ParseExecutablePath(WindowsRunCommand.Format(original, "--minimized"));
@@ -38,6 +65,11 @@ public sealed class WindowsRunCommandTests
     [TestMethod]
     public void ParseHandlesAPathWithSpacesAndAnArgument()
     {
+        if (!RequireWindows())
+        {
+            return;
+        }
+
         var parsed = WindowsRunCommand.ParseExecutablePath(@"""C:\WP Test & More\WallpaperSwitcher.exe"" --minimized");
 
         Assert.AreEqual(@"C:\WP Test & More\WallpaperSwitcher.exe", parsed);
@@ -46,6 +78,11 @@ public sealed class WindowsRunCommandTests
     [TestMethod]
     public void ParseHandlesAnUnquotedValue()
     {
+        if (!RequireWindows())
+        {
+            return;
+        }
+
         var parsed = WindowsRunCommand.ParseExecutablePath(@"C:\Apps\WallpaperSwitcher.exe");
 
         Assert.AreEqual(@"C:\Apps\WallpaperSwitcher.exe", parsed);
@@ -54,6 +91,11 @@ public sealed class WindowsRunCommandTests
     [TestMethod]
     public void ParseHandlesAnUnquotedValueWithAnArgument()
     {
+        if (!RequireWindows())
+        {
+            return;
+        }
+
         var parsed = WindowsRunCommand.ParseExecutablePath(@"C:\Apps\WallpaperSwitcher.exe --minimized");
 
         Assert.AreEqual(@"C:\Apps\WallpaperSwitcher.exe", parsed);
@@ -62,6 +104,11 @@ public sealed class WindowsRunCommandTests
     [TestMethod]
     public void ParseNormalisesRedundantSeparators()
     {
+        if (!RequireWindows())
+        {
+            return;
+        }
+
         var parsed = WindowsRunCommand.ParseExecutablePath(@"""C:\Apps\\Sub\.\WallpaperSwitcher.exe""");
 
         Assert.AreEqual(@"C:\Apps\Sub\WallpaperSwitcher.exe", parsed);

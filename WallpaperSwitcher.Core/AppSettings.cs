@@ -41,9 +41,16 @@ public sealed class AppSettings
 public sealed class WallpaperAssignment
 {
     /// <summary>
-    /// Relative to the wallpaper folder on disk; always absolute in memory.
-    /// <see cref="SettingsStore"/> converts between the two.
+    /// Relative to <see cref="AppSettings.WallpaperDirectory"/> when the image
+    /// lives inside it, absolute otherwise.
     /// </summary>
+    /// <remarks>
+    /// Saving rewrites absolute paths into this form; loading does not reverse
+    /// it. Callers match through
+    /// <see cref="WallpaperSelectionService.ResolveCategory"/>, which tries the
+    /// relative key and then the absolute one, so a settings file written before
+    /// schema 2 keeps working without a migration pass.
+    /// </remarks>
     public string Path { get; set; } = string.Empty;
 
     public WallpaperCategory Category { get; set; } = WallpaperCategory.Ignore;

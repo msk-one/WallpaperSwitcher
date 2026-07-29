@@ -1,8 +1,10 @@
 bin/
 obj/
 release/
+artifacts/
 .vs/
 TestResults/
 *.user
 *.suo
 *.pdb
+.DS_Store

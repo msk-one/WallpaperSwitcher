@@ -1,21 +1,28 @@
-using System.Windows.Threading;
+using Avalonia.Threading;
 
-namespace WallpaperSwitcher;
+namespace WallpaperSwitcher.Desktop.Services;
 
 public sealed class WallpaperScheduler : IDisposable
 {
     private static readonly TimeSpan MinimumDelay = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan WatchdogInterval = TimeSpan.FromMinutes(1);
 
-    private readonly Dispatcher _dispatcher;
     private readonly Action _onDue;
-    private readonly System.Threading.Timer _timer;
+    private readonly Action _onWatchdog;
+    private readonly Timer _timer;
+    private readonly Timer _watchdogTimer;
 
-    public WallpaperScheduler(Dispatcher dispatcher, Action onDue)
+    public WallpaperScheduler(Action onDue, Action onWatchdog)
     {
-        _dispatcher = dispatcher;
         _onDue = onDue;
-        _timer = new System.Threading.Timer(
-            _ => _dispatcher.InvokeAsync(_onDue),
+        _onWatchdog = onWatchdog;
+        _timer = new Timer(
+            _ => Dispatcher.UIThread.Post(_onDue),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
+        _watchdogTimer = new Timer(
+            _ => Dispatcher.UIThread.Post(_onWatchdog),
             null,
             Timeout.InfiniteTimeSpan,
             Timeout.InfiniteTimeSpan);
@@ -31,15 +38,18 @@ public sealed class WallpaperScheduler : IDisposable
         }
 
         _timer.Change(delay, Timeout.InfiniteTimeSpan);
+        _watchdogTimer.Change(WatchdogInterval, WatchdogInterval);
     }
 
     public void Cancel()
     {
         _timer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        _watchdogTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
     }
 
     public void Dispose()
     {
         _timer.Dispose();
+        _watchdogTimer.Dispose();
     }
 }

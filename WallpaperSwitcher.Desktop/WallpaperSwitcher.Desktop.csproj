@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <AssemblyName>WallpaperSwitcher</AssemblyName>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Committed asset; regenerate with scripts/build-windows-icon.ps1 when the
+         artwork changes. Without this the executable carries the stock .NET icon
+         in the taskbar, Explorer, Add/Remove Programs and the SmartScreen dialog. -->
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" Version="12.0.2" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.2" />
+    <!-- ItemsRepeater and UniformGridLayout moved out of Avalonia.Controls in 12.
+         They back the virtualized wallpaper grid. -->
+    <PackageReference Include="Avalonia.Controls.ItemsRepeater" Version="12.0.0" />
+    <!-- Registry access and the power/time/display notifications used on Windows.
+         Needed explicitly because the target framework is plain net9.0. -->
+    <PackageReference Include="Microsoft.Win32.SystemEvents" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\*.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WallpaperSwitcher.Core\WallpaperSwitcher.Core.csproj" />
+  </ItemGroup>
+
+  <!--
+    The SkiaSharp and HarfBuzzSharp packages ship native .pdb files (~100 MB
+    combined) as runtime assets. DebugType only controls our own symbols, so
+    these have to be dropped from the publish list explicitly or every release
+    artifact carries them.
+  -->
+  <Target Name="RemoveNativeSymbolsFromPublish" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+    </ItemGroup>
+  </Target>
+
+</Project>

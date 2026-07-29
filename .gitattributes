@@ -1,0 +1,15 @@
+# Normalize to LF in the repository regardless of a contributor's core.autocrlf.
+* text=auto eol=lf
+
+# Shell and Swift scripts are executed on macOS/Linux. CRLF in these breaks the
+# shebang with "bad interpreter: /bin/bash^M", so they must stay LF everywhere.
+*.sh text eol=lf
+*.swift text eol=lf
+
+# PowerShell and the Inno Setup script are Windows-only.
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+
+*.png binary
+*.ico binary
+*.icns binary

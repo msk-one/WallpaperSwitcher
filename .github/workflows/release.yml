@@ -1,0 +1,160 @@
+name: Release
+
+# Each platform is built on its own runner on purpose. macOS arm64 binaries need
+# at least an ad-hoc code signature to execute at all, and dotnet publish only
+# applies one when it runs on macOS, so a cross-published osx-arm64 build is
+# killed by the kernel on launch. No single machine can produce a valid set.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (without the leading v)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  AVALONIA_TELEMETRY_OPTOUT: 1
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build zip and installer
+        shell: pwsh
+        run: ./scripts/publish-windows.ps1 -Version ${{ needs.version.outputs.version }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            artifacts/zip/*.zip
+            artifacts/installer/*.exe
+
+  macos:
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build DMGs
+        run: |
+          chmod +x scripts/package-macos-dmg.sh
+          VERSION="${{ needs.version.outputs.version }}" ./scripts/package-macos-dmg.sh osx-arm64
+          VERSION="${{ needs.version.outputs.version }}" ./scripts/package-macos-dmg.sh osx-x64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: artifacts/dmg/*.dmg
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rid: [linux-x64, linux-arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish
+        run: >
+          dotnet publish WallpaperSwitcher.Desktop/WallpaperSwitcher.Desktop.csproj
+          -c Release -r ${{ matrix.rid }} --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:PublishReadyToRun=false
+          -p:DebugType=none
+          -p:Version=${{ needs.version.outputs.version }}
+          -o artifacts/publish/${{ matrix.rid }}
+
+      - name: Package
+        run: |
+          mkdir -p artifacts/tar
+          tar -czf "artifacts/tar/WallpaperSwitcher-${{ needs.version.outputs.version }}-${{ matrix.rid }}.tar.gz" \
+            -C "artifacts/publish/${{ matrix.rid }}" WallpaperSwitcher
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.rid }}
+          path: artifacts/tar/*.tar.gz
+
+  release:
+    needs: [version, windows, macos, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloaded
+
+      - name: Collect artifacts and checksums
+        shell: bash
+        run: |
+          mkdir -p release
+          find downloaded -type f \( -name '*.zip' -o -name '*.exe' -o -name '*.dmg' -o -name '*.tar.gz' \) \
+            -exec cp {} release/ \;
+          cd release
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Extract release notes from the changelog
+        shell: bash
+        run: |
+          VERSION="${{ needs.version.outputs.version }}"
+          # Pull just this version's section out of CHANGELOG.md. Uses index()
+          # rather than a regex because the brackets in "## [1.0.0]" need
+          # escaping that does not survive being embedded in a shell string.
+          awk -v header="## [$VERSION]" '
+            index($0, header) == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
+            found && index($0, "[") == 1 { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No changelog section found for $VERSION." > release-notes.md
+          fi
+          cat release-notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release-notes.md
+          draft: true
+          fail_on_unmatched_files: true

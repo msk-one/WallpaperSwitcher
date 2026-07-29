@@ -1,0 +1,19 @@
+<Project>
+
+  <!--
+    Single source of truth for version and package identity.
+    CI overrides the version from the release tag: -p:Version=${tag#v}
+  -->
+  <PropertyGroup>
+    <VersionPrefix>0.7.0</VersionPrefix>
+    <Product>Wallpaper Switcher</Product>
+    <Company>msk-one</Company>
+    <Authors>Michał Szklarski</Authors>
+    <Copyright>Copyright (c) 2026 Michał Szklarski</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/msk-one/WallpaperSwitcher</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <IncludeSourceRevisionInInformationalVersion>true</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+</Project>

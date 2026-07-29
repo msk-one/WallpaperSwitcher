@@ -444,7 +444,13 @@ public sealed class MainWindow : Window
             folder,
             ViewModel.BuildAssignmentSnapshot());
 
-        ViewModel.SetWallpaperFolderFromStorage(folderPath, ViewModel.WallpaperFolderBookmark, loadResult, "Settings loaded.");
+        // A restore, not a new choice: nothing to write back.
+        ViewModel.SetWallpaperFolderFromStorage(
+            folderPath,
+            ViewModel.WallpaperFolderBookmark,
+            loadResult,
+            "Settings loaded.",
+            persist: false);
     }
 
     private async Task<IStorageFolder?> TryOpenSelectedStorageFolderAsync()

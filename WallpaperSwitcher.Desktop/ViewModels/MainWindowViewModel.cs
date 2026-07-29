@@ -66,6 +66,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
     private bool _startMinimized;
     private bool _applyInFlight;
     private bool _applyRequestedWhileBusy;
+    private bool _coalescedRequestWasForced;
 
     public MainWindowViewModel(SettingsStore settingsStore, IWallpaperService wallpaperService)
     {
@@ -401,19 +402,50 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         _wallpaperFolderBookmark = null;
         WallpaperDirectory = folderPath;
         RefreshWallpapers(BuildAssignmentMap());
-        StatusMessage = "Folder updated. Review the Day/Night assignments, then save.";
+        CommitFolderSelection();
     }
 
+    /// <param name="persist">
+    /// False when reloading the folder the app already knows about — a macOS
+    /// bookmark restore at startup — where there is no new choice to record.
+    /// </param>
     public void SetWallpaperFolderFromStorage(
         string folderPath,
         string? bookmark,
         WallpaperLoadResult loadResult,
-        string statusPrefix = "Folder updated.")
+        string statusPrefix = "Folder updated.",
+        bool persist = true)
     {
         _wallpaperFolderBookmark = bookmark;
         WallpaperDirectory = folderPath;
         _loadedWallpaperDirectory = folderPath.Trim();
         ApplyLoadResult(loadResult, statusPrefix);
+
+        if (persist)
+        {
+            CommitFolderSelection();
+            return;
+        }
+
+        // Still needs arming: Start() runs before the bookmark resolves, so at
+        // that point there was no folder and the scheduler was cancelled.
+        ApplyWallpaperAndReschedule(forceApply: true);
+    }
+
+    /// <summary>
+    /// Records a newly chosen folder and puts its schedule into effect.
+    /// </summary>
+    /// <remarks>
+    /// Picking a folder used to only refresh the in-memory list. With no Save
+    /// button left on the Settings page, a folder whose automatic Day/Night
+    /// assignments needed no edits was never written to disk and the schedule
+    /// stayed cancelled — the choice silently vanished on the next launch unless
+    /// the user happened to change some other setting afterwards.
+    /// </remarks>
+    private void CommitFolderSelection()
+    {
+        PersistSettings();
+        ApplyWallpaperAndReschedule(forceApply: true);
     }
 
     public IReadOnlyDictionary<string, WallpaperCategory> BuildAssignmentSnapshot()
@@ -737,7 +769,7 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         }
 
         var startIndex = Math.Max(0, candidates.IndexOf(targetWallpaper));
-        BeginApply(candidates, startIndex, cycleKey, targetCategory, now, dayStart, nightStart);
+        BeginApply(candidates, startIndex, cycleKey, targetCategory, now, dayStart, nightStart, forceApply);
     }
 
     /// <summary>
@@ -758,7 +790,8 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
         WallpaperCategory targetCategory,
         DateTime now,
         TimeSpan dayStart,
-        TimeSpan nightStart)
+        TimeSpan nightStart,
+        bool forceApply)
     {
         if (_applyInFlight)
         {
@@ -766,6 +799,14 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             // land at once. Re-evaluating once at the end reaches the same result
             // as queueing each of them, without a backlog of broadcasts.
             _applyRequestedWhileBusy = true;
+
+            // Remember that one of them insisted. A forced request is the only
+            // way a change with no effect on which file is chosen — the Windows
+            // fit mode, which is written to the registry as part of applying —
+            // reaches the desktop. Retrying unforced would short-circuit on the
+            // unchanged path and cycle key, leaving the Fit dropdown disagreeing
+            // with the actual desktop until some later forced event.
+            _coalescedRequestWasForced |= forceApply;
             return;
         }
 
@@ -808,7 +849,9 @@ public sealed class MainWindowViewModel : INotifyPropertyChanged, IDisposable
             if (_applyRequestedWhileBusy)
             {
                 _applyRequestedWhileBusy = false;
-                ApplyWallpaperAndReschedule(forceApply: false);
+                var retryForced = _coalescedRequestWasForced;
+                _coalescedRequestWasForced = false;
+                ApplyWallpaperAndReschedule(retryForced);
             }
         }
     }

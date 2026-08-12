@@ -16,11 +16,18 @@ namespace WallpaperSwitcher.Desktop.Views;
 /// </summary>
 public sealed class CloseActionDialog : Window
 {
+    // The content is given an exact width and the window sizes itself to it,
+    // rather than the window asserting a width the content is laid out inside.
+    // A platform that measures text or button chrome differently then cannot
+    // leave the button row hanging off the right edge.
+    private const double ContentWidth = 380;
+    private const double ButtonWidth = 120;
+    private const double ButtonHeight = 32;
+
     private CloseActionDialog()
     {
         Title = "Close Wallpaper Switcher";
-        SizeToContent = SizeToContent.Height;
-        Width = 420;
+        SizeToContent = SizeToContent.WidthAndHeight;
         CanResize = false;
         ShowInTaskbar = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -60,7 +67,12 @@ public sealed class CloseActionDialog : Window
         };
         AutomationProperties.SetName(remember, "Remember my choice");
 
-        var body = new StackPanel { Spacing = 10, Margin = new Thickness(20, 18, 20, 18) };
+        var body = new StackPanel
+        {
+            Spacing = 10,
+            Width = ContentWidth,
+            Margin = new Thickness(20, 18, 20, 18)
+        };
 
         body.Children.Add(new TextBlock
         {
@@ -88,13 +100,8 @@ public sealed class CloseActionDialog : Window
             Margin = new Thickness(0, 8, 0, 0)
         };
 
-        var keepRunning = new Button
-        {
-            Content = "Keep running",
-            MinWidth = 120,
-            Height = 32,
-            IsDefault = true
-        };
+        var keepRunning = MakeButton("Keep running");
+        keepRunning.IsDefault = true;
         keepRunning.Classes.Add("accent");
         keepRunning.Click += (_, _) =>
         {
@@ -102,25 +109,46 @@ public sealed class CloseActionDialog : Window
             dialog.Close();
         };
 
-        var quit = new Button
-        {
-            Content = "Quit",
-            MinWidth = 120,
-            Height = 32
-        };
+        var quit = MakeButton("Quit");
         quit.Click += (_, _) =>
         {
             result = (WindowCloseAction.Quit, remember.IsChecked == true);
             dialog.Close();
         };
 
-        // Keep running is the safer default, so it is both first and the Enter key.
-        buttons.Children.Add(keepRunning);
-        buttons.Children.Add(quit);
+        // Keep running is the safer answer, so it is the default and the Enter key
+        // everywhere. Where it sits is a platform convention: macOS puts the
+        // default button rightmost, Windows and Linux put the primary one first.
+        if (OperatingSystem.IsMacOS())
+        {
+            buttons.Children.Add(quit);
+            buttons.Children.Add(keepRunning);
+        }
+        else
+        {
+            buttons.Children.Add(keepRunning);
+            buttons.Children.Add(quit);
+        }
+
         body.Children.Add(buttons);
 
         dialog.Content = body;
         await dialog.ShowDialog(owner);
         return result;
     }
+
+    /// <summary>
+    /// Both buttons are the same fixed size with symmetric padding and centred
+    /// content, so the row stays even whatever the platform's default button
+    /// chrome measures.
+    /// </summary>
+    private static Button MakeButton(string caption) => new()
+    {
+        Content = caption,
+        Width = ButtonWidth,
+        Height = ButtonHeight,
+        Padding = new Thickness(8, 0),
+        HorizontalContentAlignment = HorizontalAlignment.Center,
+        VerticalContentAlignment = VerticalAlignment.Center
+    };
 }

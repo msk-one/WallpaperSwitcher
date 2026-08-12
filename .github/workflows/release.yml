@@ -4,6 +4,9 @@ name: Release
 # at least an ad-hoc code signature to execute at all, and dotnet publish only
 # applies one when it runs on macOS, so a cross-published osx-arm64 build is
 # killed by the kernel on launch. No single machine can produce a valid set.
+#
+# Every job here runs the same script a developer would run locally, so a
+# released artifact and a locally built one are produced the same way.
 
 on:
   push:
@@ -24,10 +27,13 @@ env:
 
 jobs:
   version:
+    name: Resolve version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+
       - id: resolve
         shell: bash
         run: |
@@ -37,8 +43,31 @@ jobs:
             echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           fi
 
-  windows:
+      # Fails in seconds rather than after three platforms have been built.
+      - name: Check the changelog has a section for this version
+        shell: bash
+        run: ./scripts/release-notes.sh "${{ steps.resolve.outputs.version }}"
+
+  test:
+    name: Test (${{ matrix.os }})
     needs: version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Test
+        run: dotnet test WallpaperSwitcher.Tests/WallpaperSwitcher.Tests.csproj -c Release --logger "console;verbosity=normal"
+
+  windows:
+    name: Windows (zip + installer)
+    needs: [version, test]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,7 +90,8 @@ jobs:
             artifacts/installer/*.exe
 
   macos:
-    needs: version
+    name: macOS (DMG)
+    needs: [version, test]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -70,10 +100,11 @@ jobs:
           global-json-file: global.json
 
       - name: Build DMGs
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          chmod +x scripts/package-macos-dmg.sh
-          VERSION="${{ needs.version.outputs.version }}" ./scripts/package-macos-dmg.sh osx-arm64
-          VERSION="${{ needs.version.outputs.version }}" ./scripts/package-macos-dmg.sh osx-x64
+          ./scripts/package-macos-dmg.sh osx-arm64
+          ./scripts/package-macos-dmg.sh osx-x64
 
       - uses: actions/upload-artifact@v4
         with:
@@ -81,9 +112,11 @@ jobs:
           path: artifacts/dmg/*.dmg
 
   linux:
-    needs: version
+    name: Linux (${{ matrix.rid }})
+    needs: [version, test]
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         rid: [linux-x64, linux-arm64]
     steps:
@@ -92,22 +125,10 @@ jobs:
         with:
           global-json-file: global.json
 
-      - name: Publish
-        run: >
-          dotnet publish WallpaperSwitcher.Desktop/WallpaperSwitcher.Desktop.csproj
-          -c Release -r ${{ matrix.rid }} --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:PublishReadyToRun=false
-          -p:DebugType=none
-          -p:Version=${{ needs.version.outputs.version }}
-          -o artifacts/publish/${{ matrix.rid }}
-
-      - name: Package
-        run: |
-          mkdir -p artifacts/tar
-          tar -czf "artifacts/tar/WallpaperSwitcher-${{ needs.version.outputs.version }}-${{ matrix.rid }}.tar.gz" \
-            -C "artifacts/publish/${{ matrix.rid }}" WallpaperSwitcher
+      - name: Build tarball
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: ./scripts/publish-linux.sh ${{ matrix.rid }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -115,6 +136,7 @@ jobs:
           path: artifacts/tar/*.tar.gz
 
   release:
+    name: Draft release
     needs: [version, windows, macos, linux]
     runs-on: ubuntu-latest
     steps:
@@ -134,23 +156,21 @@ jobs:
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
-      - name: Extract release notes from the changelog
+      # Six artifacts: two Windows, two macOS, two Linux. A missing one means a
+      # platform job uploaded nothing, which is worth failing on.
+      - name: Check every platform produced its artifacts
         shell: bash
         run: |
-          VERSION="${{ needs.version.outputs.version }}"
-          # Pull just this version's section out of CHANGELOG.md. Uses index()
-          # rather than a regex because the brackets in "## [1.0.0]" need
-          # escaping that does not survive being embedded in a shell string.
-          awk -v header="## [$VERSION]" '
-            index($0, header) == 1 { found = 1; next }
-            found && index($0, "## [") == 1 { exit }
-            found && index($0, "[") == 1 { exit }
-            found { print }
-          ' CHANGELOG.md > release-notes.md
-          if [ ! -s release-notes.md ]; then
-            echo "No changelog section found for $VERSION." > release-notes.md
+          count=$(find release -type f ! -name 'SHA256SUMS.txt' | wc -l)
+          find release -type f | sort
+          if [ "$count" -ne 6 ]; then
+            echo "Expected 6 release files, found $count." >&2
+            exit 1
           fi
-          cat release-notes.md
+
+      - name: Extract release notes from the changelog
+        shell: bash
+        run: ./scripts/release-notes.sh "${{ needs.version.outputs.version }}" > release-notes.md
 
       - uses: softprops/action-gh-release@v2
         with:

@@ -1,55 +1,103 @@
-# Wallpaper Switcher
+<div align="center">
 
-Switches your desktop wallpaper between **Day** and **Night** image sets based on
-your local time, from a folder you choose. Open source, no account, no server, no
-telemetry — it only ever reads the folder you point it at.
+<img src="docs/banner.png" alt="Wallpaper Switcher — day and night wallpapers, from a folder you own" width="100%" />
 
-Runs on Windows, macOS, and Linux. Built with .NET 9 and Avalonia.
+<p>
+  <a href="https://github.com/msk-one/WallpaperSwitcher/releases/latest"><b>Download</b></a>
+  ·
+  <a href="#what-it-does">Features</a>
+  ·
+  <a href="#install-it">Install</a>
+  ·
+  <a href="#how-it-works">How it works</a>
+  ·
+  <a href="#questions">FAQ</a>
+  ·
+  <a href="CHANGELOG.md">Changelog</a>
+  ·
+  <a href="CONTRIBUTING.md">Contribute</a>
+  ·
+  <a href="https://github.com/msk-one/WallpaperSwitcher/issues/new/choose">Report a bug</a>
+</p>
 
-[![CI](https://github.com/msk-one/WallpaperSwitcher/actions/workflows/ci.yml/badge.svg)](https://github.com/msk-one/WallpaperSwitcher/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p>
+  <a href="https://github.com/msk-one/WallpaperSwitcher/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/msk-one/WallpaperSwitcher/actions/workflows/ci.yml/badge.svg" /></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg" /></a>
+  <img alt="Windows, macOS and Linux" src="https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-informational" />
+  <img alt="No account, no server" src="https://img.shields.io/badge/no%20account-no%20server-success" />
+</p>
 
-![The Wallpapers page on Windows](docs/screenshot-windows.png)
+</div>
 
-## What it does
+<br />
 
-- Point it at one folder. Subfolders are scanned too.
-- Click a tile to tag each image **Day**, **Night**, or **Ignore**. Files with
-  `day` or `night` in the name are tagged for you.
-- Drag the bar to set when day and night begin. A night window that crosses
-  midnight works.
-- Shuffle within the current set **every hour**, **every 6 hours**, **each day**,
-  or **each week**.
-- Lives in the tray. Closing the window asks whether to keep it running or quit,
-  and can remember your answer.
-- Optionally starts when you sign in, and can start straight into the tray.
+Wallpaper Switcher gives your desktop a **day set** and a **night set**, and swaps
+between them on your computer's own clock. Point it at a folder you already have,
+tag each picture as Day or Night, and forget about it — bright photos while you
+work, dark ones in the evening.
 
-Changes are saved as you make them. The image chosen for a given period is
-deterministic, so restarting the app does not reshuffle your wallpaper.
+It is free and open source, it has no account and no server, and it makes no
+network connections at all. The only thing it ever touches is the folder you
+choose.
 
-## Install
+<br />
 
-Download from the [latest release](https://github.com/msk-one/WallpaperSwitcher/releases/latest).
+# Why this exists
+
+Every operating system can shuffle a folder of wallpapers. None of them know what
+time it is. So the beach photo you love turns up at 11pm, and the moody city
+skyline greets you at breakfast.
+
+The apps that do solve this usually come with strings attached: an account, a
+subscription, a single photo service you have to take your pictures from, and a
+background process quietly talking to somebody's server.
+
+Wallpaper Switcher does the one job and stops there. Your pictures, your folder,
+your machine's clock. Nothing is uploaded, nothing is downloaded, and if you
+uninstall it your files are exactly where you left them.
+
+<br />
+
+# What it does
+
+| | |
+|---|---|
+| **Day and night sets** | Tag each image Day, Night, or Ignore. Files with `day` or `night` in the name are tagged for you the moment you pick the folder. |
+| **Your own folder** | One folder, subfolders included. Vacation photos, a pack you bought, a shared drive — it does not care where the pictures came from. |
+| **Shuffle on your terms** | A different picture every hour, every 6 hours, each day, or each week. Or never: leave one image in a set and it stays put. |
+| **You set the hours** | Drag a 24-hour bar to say when day and night begin. A night that runs from 21:00 to 07:00 works fine. |
+| **Lives in the tray** | Change wallpaper, swap day and night, or switch cadence from the tray menu without opening the window. |
+| **Starts with your computer** | Optional, and it can start straight into the tray with no window at all. |
+| **Fits the screen properly** | On Windows, choose Fill, Fit, Stretch, Center, Tile, or Span across monitors. |
+| **Looks like your desktop** | Follows your light or dark theme automatically, on all three operating systems. |
+
+<br />
+
+# Install it
+
+**[⬇ Download the latest release](https://github.com/msk-one/WallpaperSwitcher/releases/latest)**
 
 ### Windows
 
 | | |
 |---|---|
-| **Installer** (recommended) | `WallpaperSwitcher-<version>-win-x64-Setup.exe` |
-| **Portable** | `WallpaperSwitcher-<version>-win-x64.zip` |
+| **Installer** — easiest | `WallpaperSwitcher-<version>-win-x64-Setup.exe` |
+| **Portable** — no install | `WallpaperSwitcher-<version>-win-x64.zip` |
 
-Windows 10 or 11, 64-bit. Nothing else to install — .NET is bundled.
+Windows 10 or 11, 64-bit. Nothing else to install; everything it needs is inside.
 
-The installer is per-user: it installs to `%LOCALAPPDATA%\Programs\WallpaperSwitcher`,
-never prompts for administrator rights, and adds Start menu and Add/Remove
-Programs entries. The portable zip is a single executable you can run from
-anywhere, including a USB stick.
+The installer is per-user: it never asks for administrator rights, it adds the
+usual Start menu and Add/Remove Programs entries, and uninstalling cleans up
+after itself. The portable zip is a single file you can run from anywhere,
+including a USB stick.
 
 ### macOS
 
-macOS 11 or later. Download `WallpaperSwitcher-<version>-osx-arm64.dmg` (Apple
-silicon) or `-osx-x64.dmg` (Intel) and drag the app to Applications, then clear
-the quarantine flag once, because the app is not notarised:
+macOS 11 or later. Download `WallpaperSwitcher-<version>-osx-arm64.dmg` for Apple
+silicon or `-osx-x64.dmg` for Intel, and drag the app into Applications.
+
+The first launch will be refused, because the app is not notarised by Apple. Run
+this once in Terminal and it will open normally afterwards:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/WallpaperSwitcher.app
@@ -63,63 +111,105 @@ chmod +x WallpaperSwitcher
 ./WallpaperSwitcher
 ```
 
-`linux-arm64` is published too. Works with GNOME, KDE Plasma, XFCE, and any
-compositor with `swww` or `feh` available — the app tries each in turn.
+`linux-arm64` is published too. Works on GNOME, KDE Plasma and XFCE, and on any
+compositor with `swww` or `feh` available — it tries each in turn.
 
-### Why your OS warns about it
+### Why does my computer warn me about it?
 
-**Wallpaper Switcher is not code-signed**, so Windows shows "Windows protected
-your PC" (**More info** → **Run anyway**) and macOS says the developer cannot be
-verified (use the `xattr` command above). That is what every unsigned application
-gets: a signing certificate costs several hundred dollars a year, which is hard
-to justify for a free tool.
+Because the app is **not code-signed**. Windows will say "Windows protected your
+PC" (click **More info** → **Run anyway**) and macOS will say the developer
+cannot be verified (use the `xattr` command above).
 
-Every release is built by [GitHub Actions](.github/workflows/release.yml) from a
-public tag, and SHA-256 checksums are attached to each release so you can verify
-what you downloaded. If you would rather not trust the binaries,
-[build from source](#build-from-source) — it is one command.
+That warning is not a judgement about this app — it is what every unsigned
+program gets. A signing certificate costs several hundred dollars a year, which is
+hard to justify for something given away for free.
 
-## Using it
+What you get instead: every release is built in public by
+[GitHub Actions](.github/workflows/release.yml) straight from a tagged commit, and
+SHA-256 checksums are attached to each release so you can check that the file you
+downloaded is the file that was built. And if you would rather trust nothing at
+all, [build it yourself](#build-it-yourself) — it is one command.
 
-1. On **Settings**, choose your wallpaper folder.
-2. On **Wallpapers**, click any tile to cycle it **Day → Night → Ignore**.
-   Anything left as Ignore is never used.
-3. Back on **Settings**, drag the bar to set when day and night begin, and pick a
-   **Shuffle** cadence. On Windows you can also set the **Fit** mode.
+<br />
 
-There is no Save button — every change is written immediately and takes effect at
-once.
+# Using it
 
-The tray menu has the things you want without opening the window: cycle to the
-next wallpaper now, swap the day and night hours, change cadence, toggle start at
-login, and open the log folder.
+Pick your folder on **Settings**, then tag your pictures on **Wallpapers**.
+Clicking a tile cycles it **Day → Night → Ignore**, and anything left on Ignore is
+never used. There is no Save button — every change is written straight away.
 
-### File formats
+![The Wallpapers page on Windows, showing a grid of tagged images](docs/screenshot-windows.png)
 
-| Format | Preview | Applies as wallpaper |
+Back on **Settings**, drag the bar to set when day and night begin, and choose how
+often to shuffle. The same window on macOS, following the system light theme:
+
+![The Settings page on macOS](docs/screenshot-macos.png)
+
+Closing the window asks whether to keep running in the tray or quit properly, and
+can remember your answer — that row on Settings changes it back if you want the
+question again.
+
+<br />
+
+# How it works
+
+A few decisions worth knowing about, because they are what make it feel reliable:
+
+- **The picture for a given period is fixed, not random.** It is worked out from
+  the date and the period rather than drawn from a hat, so restarting the app or
+  rebooting gives you the same wallpaper back instead of a fresh shuffle.
+- **A "day" ends when your night starts, not at midnight.** An evening that runs
+  past midnight is still the same evening.
+- **It wakes up when it should.** A timer fires on the next boundary, a
+  once-a-minute check catches a machine that was asleep, and on Windows it also
+  listens for the clock changing, the screen resolution changing, and other apps
+  taking the wallpaper over.
+- **A broken picture never leaves you with a blank desktop.** Images are checked
+  before use, and an unusable one is skipped in favour of the next and noted in
+  the log.
+- **Your tags survive a move.** They are stored relative to the wallpaper folder,
+  so renaming or moving it does not throw them away.
+
+[`docs/design-notes.md`](docs/design-notes.md) goes into the details, including
+daylight saving and the known limitations.
+
+<br />
+
+# Questions
+
+**Does it upload my photos anywhere?** No. The app makes no network connections
+whatsoever. There is no account, no server and no telemetry.
+
+**Does it need to be running?** Yes — it lives in the tray and changes the
+wallpaper when the time comes. Turn on "Start when I sign in" and you can forget
+it exists.
+
+**What image formats work?**
+
+| Format | Preview thumbnail | Works as wallpaper |
 |---|---|---|
 | `.jpg` `.jpeg` `.png` `.bmp` `.gif` | Yes | Yes |
 | `.tif` `.tiff` | No | Yes |
 | `.heic` `.heif` `.webp` | `.webp` only | Only with the matching Windows codec installed |
 
-Verified on Windows 11. `.tif`/`.tiff` apply correctly but have no preview
-thumbnail, because the renderer the app uses cannot decode them. Files that
-cannot be used are skipped in favour of the next image and noted in the log,
-rather than leaving you with a blank desktop.
+**Where does it keep my settings?** In plain, readable JSON:
+`%LOCALAPPDATA%\WallpaperSwitcher\settings.json` on Windows, or
+`~/.local/share/WallpaperSwitcher/settings.json` on macOS and Linux. Logs sit
+beside it and are kept for 7 days. Uninstalling leaves both alone unless you ask
+for them to be removed.
 
-### Where your data lives
+**Can I have more than two sets?** Not today. Day and night, and that is the whole
+idea.
 
-| | |
-|---|---|
-| Settings | `%LOCALAPPDATA%\WallpaperSwitcher\settings.json` (Windows)<br>`~/.local/share/WallpaperSwitcher/settings.json` (macOS, Linux) |
-| Logs | the `logs` folder beside it, 7 days retained |
+**Something is wrong.** [Open an issue](https://github.com/msk-one/WallpaperSwitcher/issues/new/choose)
+— the log folder is one click away on the Settings page, and attaching it helps a
+lot.
 
-Settings are plain JSON you can read and edit. Uninstalling leaves them in place
-unless you ask for them to be removed.
+<br />
 
-## Build from source
+# Build it yourself
 
-Requires the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
+You need the [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0).
 
 ```bash
 git clone https://github.com/msk-one/WallpaperSwitcher.git
@@ -129,23 +219,23 @@ dotnet test WallpaperSwitcher.Tests/WallpaperSwitcher.Tests.csproj -c Release
 dotnet run --project WallpaperSwitcher.Desktop
 ```
 
-To build the release artifacts yourself:
+To produce the same artifacts a release does:
 
 ```powershell
-./scripts/publish-windows.ps1          # zip + Inno Setup installer
+./scripts/publish-windows.ps1                # portable zip + Inno Setup installer
 ```
 
 ```bash
-./scripts/package-macos-dmg.sh osx-arm64   # .app bundle + DMG, macOS only
-./scripts/publish-linux.sh linux-x64       # tarball
+./scripts/package-macos-dmg.sh osx-arm64     # .app bundle + DMG, macOS only
+./scripts/publish-linux.sh linux-x64         # tarball
 ```
 
-Each target is built on its own operating system, which is also what
-`.github/workflows/release.yml` does. A macOS build produced on a non-macOS host
-will not run: arm64 macOS binaries need a code signature that `dotnet publish`
-only applies on macOS.
+Each target is built on its own operating system, which is exactly what
+[`.github/workflows/release.yml`](.github/workflows/release.yml) does. A macOS
+build produced anywhere but macOS will not run: arm64 binaries need a signature
+that `dotnet publish` only applies on a Mac.
 
-## Project layout
+### Project layout
 
 | | |
 |---|---|
@@ -154,9 +244,21 @@ only applies on macOS.
 | `WallpaperSwitcher.Tests/` | Unit tests for the core. |
 | `docs/design-notes.md` | How scheduling works and why, plus known limitations. |
 
-The UI is built in C# rather than XAML. See [CONTRIBUTING.md](CONTRIBUTING.md)
-before sending a patch.
+Built with [.NET 9](https://dotnet.microsoft.com/) and
+[Avalonia](https://avaloniaui.net/). The UI is written in C# rather than XAML —
+[CONTRIBUTING.md](CONTRIBUTING.md) explains why, and covers the pull request
+process.
 
-## License
+<br />
 
-[MIT](LICENSE).
+# License
+
+[MIT](LICENSE). Do what you like with it.
+
+<br />
+
+<div align="center">
+
+**If this is useful to you, a star helps other people find it.** ⭐
+
+</div>

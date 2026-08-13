@@ -7,6 +7,11 @@ name: Release
 #
 # Every job here runs the same script a developer would run locally, so a
 # released artifact and a locally built one are produced the same way.
+#
+# Pushing a tag builds everything and drafts the release. Running it by hand is a
+# rehearsal by default: it builds and checks all six artifacts and publishes
+# nothing, which is how you find out that Inno Setup or hdiutil is unhappy
+# without burning a tag. Tick "publish" to draft the release from a manual run.
 
 on:
   push:
@@ -16,9 +21,17 @@ on:
       version:
         description: "Version to build (without the leading v)"
         required: true
+      publish:
+        description: "Draft the GitHub release as well, instead of only building"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.version || github.ref_name }}
+  cancel-in-progress: false
 
 env:
   DOTNET_NOLOGO: true
@@ -135,13 +148,13 @@ jobs:
           name: linux-${{ matrix.rid }}
           path: artifacts/tar/*.tar.gz
 
-  release:
-    name: Draft release
+  bundle:
+    name: Collect and check artifacts
     needs: [version, windows, macos, linux]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/download-artifact@v4
         with:
           path: downloaded
@@ -154,19 +167,58 @@ jobs:
             -exec cp {} release/ \;
           cd release
           sha256sum * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
 
-      # Six artifacts: two Windows, two macOS, two Linux. A missing one means a
-      # platform job uploaded nothing, which is worth failing on.
+      # Named rather than counted, so a rename or a platform that quietly
+      # published the wrong runtime fails here instead of in someone's download.
       - name: Check every platform produced its artifacts
         shell: bash
         run: |
-          count=$(find release -type f ! -name 'SHA256SUMS.txt' | wc -l)
-          find release -type f | sort
-          if [ "$count" -ne 6 ]; then
-            echo "Expected 6 release files, found $count." >&2
-            exit 1
-          fi
+          missing=0
+          for suffix in win-x64.zip win-x64-Setup.exe osx-arm64.dmg osx-x64.dmg linux-x64.tar.gz linux-arm64.tar.gz; do
+            if [ ! -f "release/WallpaperSwitcher-$VERSION-$suffix" ]; then
+              echo "Missing WallpaperSwitcher-$VERSION-$suffix" >&2
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Summarise
+        shell: bash
+        run: |
+          {
+            echo "## Wallpaper Switcher $VERSION"
+            echo
+            echo '| Artifact | Size |'
+            echo '|---|---|'
+            for f in release/*; do
+              [ "$(basename "$f")" = SHA256SUMS.txt ] && continue
+              printf '| `%s` | %s |\n' "$(basename "$f")" "$(du -h "$f" | cut -f1)"
+            done
+            echo
+            echo '```'
+            cat release/SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle
+          path: release/*
+
+  publish:
+    name: Draft release
+    needs: [version, bundle]
+    # A tag publishes. A manual run only publishes when asked to, so the default
+    # manual run is a rehearsal that cannot create a release named after a branch.
+    if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-bundle
+          path: release
 
       - name: Extract release notes from the changelog
         shell: bash
@@ -174,6 +226,10 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          # Explicit, because the default is github.ref: on a manual run that
+          # would be a branch name, and the release would be tagged with it.
+          tag_name: v${{ needs.version.outputs.version }}
+          name: Wallpaper Switcher ${{ needs.version.outputs.version }}
           files: release/*
           body_path: release-notes.md
           draft: true

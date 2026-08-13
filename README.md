@@ -26,6 +26,8 @@
   <img alt="Multiplatform" src="https://img.shields.io/badge/Multiplatform-informational" />
 </p>
 
+<img src="docs/collage.png" alt="The Wallpapers grid, the Settings page, the tray menu, and the close prompt" width="100%" />
+
 </div>
 
 <br />

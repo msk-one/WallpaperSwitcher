@@ -8,10 +8,14 @@ name: Release
 # Every job here runs the same script a developer would run locally, so a
 # released artifact and a locally built one are produced the same way.
 #
-# Pushing a tag builds everything and drafts the release. Running it by hand is a
-# rehearsal by default: it builds and checks all six artifacts and publishes
-# nothing, which is how you find out that Inno Setup or hdiutil is unhappy
-# without burning a tag. Tick "publish" to draft the release from a manual run.
+# Pushing a v* tag builds everything and drafts the release for that tag.
+#
+# Running it by hand is a rehearsal by default: it builds and checks all six
+# artifacts and publishes nothing, which is how you find out that Inno Setup or
+# hdiutil is unhappy without burning a tag. Tick "publish" and the same run puts
+# the binaries on the Releases page as a prerelease tagged <branch>-<version>,
+# so a build from a branch is downloadable, is never mistaken for the real
+# release, and is replaced by the next build from that same branch.
 
 on:
   push:
@@ -44,6 +48,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      name: ${{ steps.resolve.outputs.name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -51,9 +58,24 @@ jobs:
         shell: bash
         run: |
           if [ -n "${{ github.event.inputs.version }}" ]; then
-            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            version="${{ github.event.inputs.version }}"
           else
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "channel=release" >> "$GITHUB_OUTPUT"
+            echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+            echo "name=Wallpaper Switcher $version" >> "$GITHUB_OUTPUT"
+          else
+            # Built from a branch: tagged with the branch and version, so
+            # successive builds from it replace each other rather than piling
+            # up, and nothing collides with the v<version> release tag.
+            branch="${GITHUB_REF_NAME//\//-}"
+            echo "channel=dev" >> "$GITHUB_OUTPUT"
+            echo "tag=$branch-$version" >> "$GITHUB_OUTPUT"
+            echo "name=Wallpaper Switcher $version ($branch)" >> "$GITHUB_OUTPUT"
           fi
 
       # Fails in seconds rather than after three platforms have been built.
@@ -206,10 +228,10 @@ jobs:
           path: release/*
 
   publish:
-    name: Draft release
+    name: Publish (${{ needs.version.outputs.tag }})
     needs: [version, bundle]
     # A tag publishes. A manual run only publishes when asked to, so the default
-    # manual run is a rehearsal that cannot create a release named after a branch.
+    # manual run is a rehearsal.
     if: startsWith(github.ref, 'refs/tags/') || github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -220,17 +242,35 @@ jobs:
           name: release-bundle
           path: release
 
-      - name: Extract release notes from the changelog
+      - name: Build the release notes
         shell: bash
-        run: ./scripts/release-notes.sh "${{ needs.version.outputs.version }}" > release-notes.md
+        run: |
+          if [ "${{ needs.version.outputs.channel }}" = dev ]; then
+            {
+              echo "**Development build** of \`$GITHUB_REF_NAME\` at \`${GITHUB_SHA:0:7}\`."
+              echo
+              echo "Not a tagged release: it is replaced by the next build from the same"
+              echo "branch, and it is not the download the README points at. Checksums are"
+              echo "in \`SHA256SUMS.txt\` below."
+              echo
+              echo "---"
+              echo
+            } > release-notes.md
+          fi
+          ./scripts/release-notes.sh "${{ needs.version.outputs.version }}" >> release-notes.md
 
       - uses: softprops/action-gh-release@v2
         with:
           # Explicit, because the default is github.ref: on a manual run that
-          # would be a branch name, and the release would be tagged with it.
-          tag_name: v${{ needs.version.outputs.version }}
-          name: Wallpaper Switcher ${{ needs.version.outputs.version }}
+          # would be a bare branch name, and the release would be tagged with it.
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: ${{ needs.version.outputs.name }}
           files: release/*
           body_path: release-notes.md
-          draft: true
+          # A real tag is drafted so the notes can be read before anyone sees it.
+          # A branch build is published straight away, because the point of it is
+          # to be downloadable, but marked prerelease and never "latest".
+          draft: ${{ needs.version.outputs.channel == 'release' }}
+          prerelease: ${{ needs.version.outputs.channel == 'dev' }}
+          make_latest: ${{ needs.version.outputs.channel == 'release' }}
           fail_on_unmatched_files: true

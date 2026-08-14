@@ -26,8 +26,6 @@
   <img alt="Multiplatform" src="https://img.shields.io/badge/Multiplatform-informational" />
 </p>
 
-<img src="docs/collage.png" alt="The Wallpapers grid, the Settings page, the tray menu, and the close prompt" width="100%" />
-
 </div>
 
 <br />
@@ -38,6 +36,8 @@ tag each picture as Day or Night, and forget about it: brighter photos while you
 work, dark ones in the evening.
 
 It is free and open source, under the MIT License. In this version, it's totally offline - no connections to the internet are being made. The only thing it ever touches is the folder you choose. I am thinking of additional plug-ins that will allow you to pair the app with online wallpaper hosting services. 
+
+<img src="docs/collage.png" alt="The Wallpapers grid, the Settings page, the tray menu, and the close prompt" width="100%" />
 
 <br />
 
